@@ -23,21 +23,27 @@ Three workflows exist. Read the trigger before you decide that CI tested a commi
 
 | Workflow | Fires on | Publishes |
 |---|---|---|
-| `build.yml` | A push to any branch except `beta`, and every pull request | **A stable release, on a push to `main` only.** That push bumps the version, tags it and uploads a `make_latest` release. |
-| `beta-build.yml` | A push to `beta`, and manual dispatch | **A pre-release, on every push.** It bumps the version and attaches the `.hex` assets. |
+| `build.yml` | A push to any branch, and every pull request | Nothing. It is CI only. |
+| `release.yml` | A push of a version tag `X.Y.Z`, `X.Y.ZbN` or `X.Y.ZrcN` on `main` | **A GitHub release.** A `b`/`rc` tag gives a pre-release with dev tools and the py32f071 image. A plain tag gives a stable release marked Latest, without dev tools. |
 | `py32f071.yml` | A push to any branch, and pull requests that touch ARM paths | Nothing. It is the ARM build gate and never continues on error. |
 
+**Only a version tag publishes.** A merge to `main` publishes nothing. `tools/release.sh X.Y.Z`
+checks the version and pushes the tag. The firmware releases independently of `firestarter_app`.
+
+**The version comes from the tag.** `version_from_git.py` (a `pre:` extra_script) defines `VERSION`
+from `git describe`: the tag itself on a tagged commit, `<next>.devN` between tags. With no release
+tag in reach, the fallback in `include/version.h` (`0.0.0`) applies. `release.yml` also writes the
+tag into `include/version.h` before it builds, because the CMake build of py32f071 reads the header.
+
 `build.yml` ignores a commit that touches only `**.md`, `**.sh`, `.gitignore`, `docs/`,
-`documents/`, `images/`, `.vscode/` or `.editorconfig/`. `beta-build.yml` has no path filter. The
-version compiles into the binary, so a documentation-only push to `beta` publishes a new firmware
-version.
+`documents/`, `images/`, `.vscode/` or `.editorconfig/`. It runs these steps in this order:
 
-`build.yml` runs these steps in this order:
-
-1. `pio test -e native`. This step runs on pull requests only.
-2. `pio test -e native_nodevtools`. This step always runs.
+1. `pio test -e native`.
+2. `pio test -e native_nodevtools`.
 3. `pytest tests/ -v`. This step needs full git history, so the checkout sets `fetch-depth: 0`.
-4. `pio run`.
+4. `pio run`, without and then with `-D DEV_TOOLS=1`.
+
+`release.yml` runs the same tests, then builds the configuration that the tag asks for.
 
 **This repository has two test trees.** `test/` holds the PlatformIO Unity suites. `tests/` holds a
 Python suite. Most Python tests scan firmware source text. These source scans are legacy and
@@ -48,24 +54,25 @@ runs a `pio` environment other than `native` and `native_nodevtools`.
 
 ### Which channel ships dev tools
 
-The shared `[env]` block in `platformio.ini` does not enable dev tools. `beta-build.yml` sets
-`PLATFORMIO_BUILD_FLAGS` to `-D DEV_TOOLS=1` for its `pio run`. Each pre-release image therefore
-implements `CMD_DEV_ADDRESS` (`7`) and `CMD_DEV_REGISTER` (`8`). The host commands
-`firestarter dev addr` and `firestarter dev reg` need them. `build.yml` sets no such flag, so a
-stable image refuses both commands.
+The shared `[env]` block in `platformio.ini` does not enable dev tools. For a pre-release tag,
+`release.yml` sets `PLATFORMIO_BUILD_FLAGS` to `-D DEV_TOOLS=1` for its `pio run`. Each pre-release
+image therefore implements `CMD_DEV_ADDRESS` (`7`) and `CMD_DEV_REGISTER` (`8`). The host commands
+`firestarter dev addr` and `firestarter dev reg` need them. For a stable tag it sets no such flag,
+so a stable image refuses both commands.
 
 **`platformio.ini` tells you what a local build does. It does not tell you what ships.** To build
-a local image that matches the beta artifact, run:
+a local image that matches a pre-release artifact, run:
 
 ```bash
 PLATFORMIO_BUILD_FLAGS="-D DEV_TOOLS=1" pio run -e leonardo
 ```
 
 A plain `pio run` gives a stable-configured image. That image answers the two dev commands with an
-unknown-command error. It still reports the version string in `include/version.h`.
+unknown-command error. It still reports the version that `version_from_git.py` derives.
 
-CI checks both directions. A step in `beta-build.yml` fails the run if an AVR image does not have
-the dev commands. A step in `build.yml` fails the run if an AVR image has them.
+CI checks both directions. `build.yml` builds both configurations and fails if either image has
+the wrong dev-command set. `release.yml` checks the same for the images it publishes, and checks
+that each image carries the tag as its version string.
 
 ## Architecture
 
