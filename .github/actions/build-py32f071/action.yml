@@ -6,15 +6,16 @@ description: >
   install + cmake configure + cmake build invocation. A composite action
   runs its steps in the calling job, on the same runner and in the same
   workspace as that job's own checkout -- which is exactly what keeps
-  REL-01's "same job, after the version bump" property intact: this action
+  the "same job, after the version is written" property intact: this action
   produces its image inside whichever job calls it, immediately after that
-  job's prior steps, with no second checkout to go stale. A `workflow_call`
-  reusable workflow would NOT have this property -- it runs as a separate
-  job with a separate checkout, and would break REL-01 outright. Do not
-  convert this file to `workflow_call`.
+  job's prior steps, with no second checkout to go stale. release.yml writes
+  the tag into include/version.h before it calls this action, and the image
+  must see that edit. A `workflow_call` reusable workflow runs as a separate
+  job with a separate checkout and would not. Do not convert this file to
+  `workflow_call`.
 
   D-05/T-128-11: `continue-on-error` must never appear anywhere in this
-  file. It belongs on the call site in `beta-build.yml` only. If it were
+  file. It belongs on the call site in `release.yml` only. If it were
   added here, the LOUD `py32f071.yml` gate would silently inherit the
   containment, and D-05's whole loud/soft split between the two workflows
   would collapse without warning.
