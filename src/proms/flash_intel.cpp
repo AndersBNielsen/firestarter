@@ -15,6 +15,7 @@
 #include "operation_utils.h"
 #include "rurp_shield.h"
 #include "rurp_pinout.h"
+#include "timeout_utils.h"
 
 void flash_intel_write_init(firestarter_handle_t* handle);
 void flash_intel_write_execute(firestarter_handle_t* handle);
@@ -120,8 +121,8 @@ void flash_intel_cleanup(firestarter_handle_t* handle) {
 }
 
 static bool flash_intel_poll_sr(firestarter_handle_t* handle, uint16_t timeout_ms) {
-    unsigned long deadline = millis() + timeout_ms;
-    while (millis() < deadline) {
+    const uint32_t started_ms = (uint32_t)millis();
+    while (!fs_timeout_expired(started_ms, (uint32_t)timeout_ms, (uint32_t)millis())) {
         uint8_t sr = handle->firestarter_get_data(handle, 0);
         if (sr & 0x80) {
             if (sr & 0x10) {
