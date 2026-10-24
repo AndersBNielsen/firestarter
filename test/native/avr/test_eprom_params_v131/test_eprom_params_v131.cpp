@@ -4,10 +4,9 @@
  *
  * Permission is hereby granted under MIT license.
  *
- * Every case builds a FRESH, zero-initialised handle: json_parse() does NOT
- * reset pulse_delay, protocol, mem_size, vpp_mv or pins (src/json_parser.c:
- * 81-89), so a stale global handle would leak state between cases (Pitfall
- * 4 / S8).
+ * Every case builds a FRESH, zero-initialised handle, because these cases
+ * call configure_memory directly with no command frame to set the fields,
+ * so a shared handle would leak state between cases.
  */
 
 #include <Arduino.h>
@@ -41,9 +40,9 @@ void setUp(void) {
 
 void tearDown(void) {}
 
-/* Fresh handle per case (Pitfall 4) -- json_parse never resets pulse_delay,
- * protocol, mem_size, vpp_mv or pins, so a stale global handle would leak
- * state between cases. FLAG_SKIP_ERASE keeps a CMD_WRITE dispatch from
+/* Fresh handle per case -- no command frame writes pulse_delay, protocol,
+ * mem_size, vpp_mv or pins here, so a shared handle would leak state
+ * between cases. FLAG_SKIP_ERASE keeps a CMD_WRITE dispatch from
  * wanting an erase path this suite never drives (configure_eprom only sets
  * up function pointers and the pulse_delay fallback for CMD_WRITE; neither
  * pointer is ever invoked here; write-init itself performs no blank check
