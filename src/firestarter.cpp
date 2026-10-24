@@ -74,7 +74,11 @@ bool parse_json(firestarter_handle_t* handle) {
 
     LOG_DEBUG_ID_SUB_U8(DBG_CMD, (uint8_t)handle->cmd);
     if (is_memory_cmd(handle->cmd) || handle->cmd < CMD_READ_VPP) {
-        json_parse(handle->data_buffer, tokens, token_count, handle);
+        if (json_parse(handle->data_buffer, tokens, token_count, handle) < 0 ||
+            (is_memory_cmd(handle->cmd) && !json_memory_params_valid(handle))) {
+            LOG_ERROR_ID(MSG_ERR_BAD_JSON);
+            return false;
+        }
         // Neither this `if` nor its `else` carries a build conditional; only the two
         // debug log lines inside the `else` do, because the flags they name have no
         // meaning outside a DEV_TOOLS build. In a release build that body compiles
@@ -277,6 +281,9 @@ void loop() {
                 if (init_programmer_framed(&handle)) {
                     return;
                 }
+                // Setup may have set cmd before rejecting the frame. Clear it
+                // and disable outputs now, not on the next timeout tick.
+                command_done(&handle);
             } else {
                 /* CRC mismatch, COBS violation, overflow, or read underrun.
                  * MSG_ERR_EMPTY_INPUT reused (messages.h is codegen; adding
