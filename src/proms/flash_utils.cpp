@@ -87,13 +87,8 @@ uint16_t flash_util_get_chip_id(firestarter_handle_t* handle) {
     return chip_id;
 }
 
-/* Shared single-byte AMD/JEDEC ID-mode read.
- * flash_util_get_chip_id above is the fixed 0x0000/0x0001 pair; a
- * protect-verify read is the identical mode with a caller-supplied
- * address, so it lives beside it rather than duplicating the sequence in
- * either family handler. Left flash_util_get_chip_id itself unchanged —
- * re-expressing its two-byte read on top of this helper would enter and
- * exit the mode twice for what is today one entry/exit pair. */
+/* Read an arbitrary AMD/JEDEC ID-mode byte for protection checks.
+ * The fixed two-byte chip-ID reader keeps one enter/exit sequence. */
 uint8_t flash_util_read_in_id_mode(firestarter_handle_t* handle, uint32_t address) {
     flash_execute_command(FLASH_ENABLE_ID);
     uint8_t data = handle->firestarter_get_data(handle, address);

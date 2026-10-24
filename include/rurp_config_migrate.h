@@ -16,20 +16,10 @@
 extern "C" {
 #endif
 
-/*
- * Bring a stored configuration up to date, field by field, and report whether
- * anything changed. Pure: it touches no storage, so it is natively testable.
- *
- * Range-checking each field rather than gating on the version string is what
- * makes this reach a stale value the old policy never could. A board whose
- * EEPROM carried the pre-Phase-44 r1 of 1000 kept it forever, because the
- * version string already matched and the wipe only ran on a mismatch.
- *
- * hardware_revision is preserved unconditionally. Every value including 0xFF
- * ("no override") is meaningful, so there is no band to test it against -- and
- * the previous policy reset it on every version bump, silently destroying an
- * operator's shield-revision override.
- */
+/* Validate and migrate stored configuration fields without accessing storage.
+ * Range checks run even when the configuration version matches, so stale
+ * calibration values do not survive indefinitely. Preserve hardware_revision,
+ * including 0xFF (no override), across migrations. */
 bool rurp_config_migrate(rurp_configuration_t* config);
 
 #ifdef __cplusplus

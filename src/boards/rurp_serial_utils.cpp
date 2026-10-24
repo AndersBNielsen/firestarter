@@ -346,11 +346,8 @@ static uint8_t crc8_ccitt(uint8_t crc, uint8_t b) {
     return pgm_read_byte(&CRC8_TABLE[crc ^ b]);
 }
 
-// Board-agnostic frame emitter — same line discipline as Phase-9-deleted
-// text-prefix log helpers (single-byte writes, .flush() at end). Does NOT
-// consult com_mode; the strong override on Uno gates this call. Leonardo's
-// USB-CDC has no PORTD aliasing risk so it uses the weak default of
-// rurp_log_id which calls this unconditionally.
+// Emit board-independent framed messages; Uno's override gates UART output
+// during programmer mode to avoid disturbing the shared data bus.
 void _firestarter_emit_frame(uint8_t id, const uint8_t* params, uint8_t param_count) {
     // Wire-frame budget guard: `len = 1 (id) + param_count + 1 (crc)` must
     // fit in a uint8_t. With param_count >= 254 the `len` byte wraps silently
@@ -448,11 +445,8 @@ __attribute__((weak)) void rurp_log_id(uint8_t id, const uint8_t* params, uint8_
     _firestarter_emit_frame(id, params, param_count);
 }
 
-// Fixed-shape packers. Each LOG_*_ID_U{8,16,24,32} macro previously inlined
-// the byte-array build at every call site (~10-30 instructions × ~30 sites).
-// Sharing the pack here keeps the call site to a single CALL and reduces
-// Flash use by ~200-400 B on AVR. No com_mode gate needed; rurp_log_id
-// itself routes through the strong override on Uno.
+// Centralized byte packers keep AVR log call sites small. Uno's
+// rurp_log_id override applies the required communication-mode gate.
 void rurp_log_id_u8(uint8_t id, uint8_t v) {
     uint8_t b[1] = { v };
     rurp_log_id(id, b, 1);
