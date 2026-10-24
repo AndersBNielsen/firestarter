@@ -305,35 +305,37 @@ static void store_field(firestarter_handle_t* handle, const field_desc_t* field,
     memcpy((uint8_t*)handle + offset, &value, width);
 }
 
-int json_parse(const char* json, jsmntok_t* tokens, int token_count, firestarter_handle_t* handle) {
+/* Reset only command-scoped parser state. Never clear data_buffer, data_size,
+ * cmd, operation state, callbacks or persistent board calibration.
+ *
+ * The handle is reused between commands; omission on the wire must never
+ * inherit a previous chip's protocol, pulse width, VPP target or bus mapping.
+ * Use zero for optional scalar defaults (pulse-delay 0 requests the existing
+ * protocol default). No temporary copy of the handle is needed on AVR.
+ */
+static void json_reset_command_parameters(firestarter_handle_t* handle) {
+    handle->protocol = 0;
+    handle->pins = 0;
+    handle->mem_size = 0;
     handle->address = 0;
+    handle->vpp_mv = 0;
+    handle->pulse_delay = 0;
+    handle->read_settling_us = 0;
+    handle->read_strobe_us = 0;
     handle->ctrl_flags = 0;
+    handle->chip_id = 0;
+    handle->page_size = 0;
+    handle->region_end = 0;
+
+    memset(&handle->bus_config, 0, sizeof(handle->bus_config));
+    memset(handle->bus_config.address_lines, 0xFF,
+           sizeof(handle->bus_config.address_lines));
     handle->bus_config.rw_line = 0xFF;
     handle->bus_config.vpp_line = 0xFF;
-    handle->bus_config.address_lines[0] = 0xFF;
-    handle->bus_config.address_mask = 0;
-    handle->bus_config.static_high_mask = 0;
-    handle->chip_id = 0;
-    /* page_size resets to 0 exactly like chip_id above. handle is a
-     * single file-scope global with no per-command memset, and page-size is
-     * emit-when-present, so without this reset a 128 parsed for one chip
-     * would persist into the next command and "absent means 64" becomes
-     * false in practice -- the exact overrun this reset exists to prevent.
-     * The two read-timing knobs (read_settling_us, read_strobe_us) are
-     * deliberately NOT in this reset block: that is a pre-existing latent
-     * instance of the same defect, filed as a todo, so their absence here is
-     * not an oversight. */
-    handle->page_size = 0;
-    /* region_end resets to 0 for a stronger reason than page_size above:
-     * handle is one file-scope global with no per-command memset, and
-     * under D-04 0 means "whole device" -- so a stale non-zero value left
-     * over from a previous command would NARROW a later whole-device blank
-     * check instead of widening it. That is fail-OPEN: a blank-check run
-     * right after a partial write could scan only the write's region and
-     * report the whole device blank. Without this reset that fail-open
-     * path is live; with it, every command starts from whole-device unless
-     * it supplies its own region-end. */
-    handle->region_end = 0;
+}
+
+int json_parse(const char* json, jsmntok_t* tokens, int token_count, firestarter_handle_t* handle) {
+    json_reset_command_parameters(handle);
 
     if (token_count < 1 || tokens[0].type != JSMN_OBJECT) {
         return -1; // Not a JSON object
@@ -389,6 +391,18 @@ int json_parse(const char* json, jsmntok_t* tokens, int token_count, firestarter
         handle->bus_config.address_mask = 0xFFFF;
     }
     return 0;
+}
+
+/* Every current host memory command includes these four fields, even for
+ * 5V-only families. A zero here means omitted or unusable data; refuse it
+ * before configuring hardware rather than falling back to prior state.
+ *
+ * Optional pulse-delay, chip-id, read timings and bus-config deliberately
+ * remain optional. pulse-delay 0 means "use protocol default" on EPROMs.
+ */
+bool json_memory_params_valid(const firestarter_handle_t* handle) {
+    return handle->mem_size != 0 && handle->protocol != 0 &&
+           handle->pins != 0 && handle->vpp_mv != 0;
 }
 
 int json_parse_config(const char* json, jsmntok_t* tokens, int token_count, rurp_configuration_t* config, firestarter_handle_t* handle) {
