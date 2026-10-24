@@ -15,22 +15,12 @@ extern "C" {
 #define READ_FLAG 1
 
 uint32_t mem_util_remap_address_bus(const firestarter_handle_t* handle, uint32_t address, uint8_t read_write);
-/* The shared final-pass read-and-compare that eprom.cpp's
- * VERIFY_PER_PULSE_PLUS_FINAL arm calls after its per-pulse loop converges,
- * instead of carrying a byte-identical copy. Defined in
- * src/proms/memory.cpp. Its command surface -- the standalone verify
- * command's own wire ordinal -- was retired in 3.1.0 (Phase 204); the
- * function itself was deliberately kept, because it is still the eprom
- * program loop's only final-pass verify. */
+/* Final-pass read-back verification used after EPROM programming.
+ * No separate host verify command is required for this operation. */
 void memory_verify_execute(firestarter_handle_t* handle);
-/* The single resolution point for D-04's "0 = absent = whole device"
- * fallback and for the fail-closed clamp: returns handle->mem_size when
- * handle->region_end is 0 OR exceeds handle->mem_size, else returns
- * handle->region_end. Deliberately a function rather than an inline
- * ternary -- a ternary written inside eprom.cpp would add a row to the
- * branch-inventory golden (tests/golden/protocol_branch_inventory.json),
- * a function call in a plain assignment does not. Both eprom_operations.cpp
- * and eprom.cpp call it. Defined in src/proms/memory.cpp. */
+/* Resolve the exclusive end of a memory operation. A zero or out-of-range
+ * region_end means the entire device; otherwise honor the bounded region.
+ * The same clamp must apply to reads, writes and verify operations. */
 uint32_t mem_util_operation_end(const firestarter_handle_t* handle);
 void mem_util_set_address(firestarter_handle_t* handle, uint32_t address);
 rurp_register_t mem_util_calculate_lsb_register(firestarter_handle_t* handle, uint32_t address);
