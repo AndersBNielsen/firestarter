@@ -88,15 +88,7 @@ from pathlib import Path
 # check_orphan_provisional.py:163 / check_cmake_manifest.py:110).
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# The two files whose co-occurrence with platform/py32f071/ this gate
-# enforces. Verified this session as exactly the two files
-# origin/agent/portability-macros ADDS over the merge base a1953c2 (it also
-# modifies include/rurp_serial_utils.h and include/rurp_shield.h, which are
-# not markers because they pre-exist).
-#
-# NOTE: include/rurp_platform.h is py32-BRANCH content, not
-# portability-branch content (research correction R-1), and is therefore
-# deliberately NOT a marker here.
+# Require both portability files whenever the PY32 port is present.
 PORTABILITY_MARKERS = ("include/rurp_platform_compat.h", "include/avr/pgmspace.h")
 
 # The directory whose presence in the same tree as a marker exempts that

@@ -15,22 +15,12 @@ extern "C" {
 #define READ_FLAG 1
 
 uint32_t mem_util_remap_address_bus(const firestarter_handle_t* handle, uint32_t address, uint8_t read_write);
-/* The shared final-pass read-and-compare that eprom.cpp's
- * VERIFY_PER_PULSE_PLUS_FINAL arm calls after its per-pulse loop converges,
- * instead of carrying a byte-identical copy. Defined in
- * src/proms/memory.cpp. Its command surface -- the standalone verify
- * command's own wire ordinal -- was retired in 3.1.0 (Phase 204); the
- * function itself was deliberately kept, because it is still the eprom
- * program loop's only final-pass verify. */
+/* Shared final read-and-compare pass after pulse verification converges.
+ * Required by the EPROM program path regardless of standalone commands. */
 void memory_verify_execute(firestarter_handle_t* handle);
-/* The single resolution point for D-04's "0 = absent = whole device"
- * fallback and for the fail-closed clamp: returns handle->mem_size when
- * handle->region_end is 0 OR exceeds handle->mem_size, else returns
- * handle->region_end. Deliberately a function rather than an inline
- * ternary -- a ternary written inside eprom.cpp would add a row to the
- * branch-inventory golden (tests/golden/protocol_branch_inventory.json),
- * a function call in a plain assignment does not. Both eprom_operations.cpp
- * and eprom.cpp call it. Defined in src/proms/memory.cpp. */
+/* Resolve the exclusive operation end: region_end == 0 or > mem_size
+ * means the whole device; otherwise use region_end. The clamp prevents
+ * an invalid host-supplied range from extending beyond the device. */
 uint32_t mem_util_operation_end(const firestarter_handle_t* handle);
 void mem_util_set_address(firestarter_handle_t* handle, uint32_t address);
 rurp_register_t mem_util_calculate_lsb_register(firestarter_handle_t* handle, uint32_t address);
@@ -81,12 +71,8 @@ void mem_util_report_voltage(firestarter_handle_t* handle, uint16_t measured_mv,
  */
 bool mem_util_refuse_bad_calibration(firestarter_handle_t* handle);
 
-/*
- * Apply the VPP acceptance window to a measured reading, emitting the right
- * message and response code. One implementation for both call sites: this
- * logic used to sit byte-for-byte identical in eprom.cpp and flash_intel.cpp,
- * so a change to one silently left the other on the old policy.
- */
+/* Apply a common measured-VPP acceptance window and report the matching
+ * error code for both EPROM and Intel flash paths. */
 void mem_util_check_vpp_window(firestarter_handle_t* handle, uint16_t vpp_mv);
 
 /*

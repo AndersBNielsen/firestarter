@@ -46,19 +46,10 @@ extern "C" {
 #define PIN_HW_REVISION_DETECT_ADC A3
 #endif
 
-// ---- Section 1b: ADC voltage-band thresholds (HARDWARE_REVISION-gated) -------
-// Consumed by rurp_detect_hardware_revision() in rurp_hw_rev_utils.h.
-// Thresholds UNCHANGED — bench measurement (2026-05-26) validated 0/15 reads
-// in the [200, 220) guard gap across
-// 3 shield revisions; the existing 20-count gap is empirically sufficient.
-// SEMANTIC NOTE, since the INPUT high-Z fix: bands now characterize
-// A3-net composition (R41-only-to-GND = low; external-pull-up-to-+5V = mid;
-// floating = high), NOT R41 value alone. The internal pull-up R_top the
-// original band-math assumed (INPUT_PULLUP) is now disabled — R41 value no
-// longer drives ADC variance. A future Rev 2.4 PCB could add an external
-// R_top to restore the original divider semantics.
-// #define (NOT constexpr) — preprocessor constants resolve
-// at compile time and contribute 0 B to the .hex until referenced.
+// ADC hardware-revision bands use A3 with its internal pull-up disabled:
+// R41-only-to-GND is low, an external pull-up is mid, and floating is high.
+// The [200, 220) guard gap had no samples in measurements across three
+// shield revisions; the band identifies the A3 net, not R41 alone.
 #ifdef HARDWARE_REVISION
 #define ADC_BAND_R41_4K7_HIGH 200  // upper edge of low band (R41-only-to-GND; Rev 2.0/2.1/2.2 + Rev 2.3 stock)
 #define ADC_BAND_R41_10K_LOW  220  // lower edge of mid band (external pull-up active — operator-reworked boards); [200, 220) -> REVISION_UNKNOWN guard gap
@@ -66,7 +57,7 @@ extern "C" {
 #endif
 
 // ---- Section 2: Control-register bits (CTRL_*) -------------------------
-// Mirrors rurp_shield.h:24-53 VERBATIM under new names.
+// Public logical names for RURP control-register bits.
 
 #ifndef HARDWARE_REVISION
 #define CTRL_VPP_VPE_DROP_ENABLE      0x01
@@ -80,8 +71,7 @@ extern "C" {
 #define CTRL_VPP_REGULATOR_ENABLE     0x80
 
 #else
-// HARDWARE_REVISION wide layout — same names, distinct values for the
-// ADDRESS_LINE_16 / VPP_VPE_DROP_ENABLE pair (Pitfall 2).
+// Hardware-revision layout separates ADDRESS_LINE_16 and the drop-enable bit.
 #define CTRL_ADDRESS_LINE_16          0x01
 #define CTRL_VPP_A9_ENABLE            0x02
 #define CTRL_VPE_ENABLE               0x04
@@ -99,9 +89,7 @@ extern "C" {
 //   - LOGICAL masks. The physical effect is produced by
 //     rurp_map_ctrl_reg_for_hardware_revision() at the register write, so this
 //     header states intent, not the wire pattern.
-//   - The EPROM_ prefix is deliberate: the native warning watermark has zero
-//     headroom and every recorded warning is a macro redefinition, so a generic
-//     name risks colliding with an ArduinoFake or pgmspace macro.
+//   - EPROM_ avoids collisions with platform and test macros.
 //   - On the legacy (!HARDWARE_REVISION) arm CTRL_VPP_VPE_DROP_ENABLE IS
 //     CTRL_ADDRESS_LINE_16 -- a real alias. Both composites therefore also
 //     clear A16 there. Harmless: they are only ever used to DISABLE the route.
@@ -113,7 +101,6 @@ extern "C" {
 //   - A PRESERVE/HOLD mask cannot be a #define: its drop-bit membership depends
 //     on a runtime revision read and on handle->pins. That stays inside
 //     mem_util_calculate_top_address_register.
-//   - #define, not constexpr: a composite nothing references costs 0 B.
 #define EPROM_HV_ROUTE_MASK    (CTRL_VPP_REGULATOR_ENABLE | CTRL_VPP_VPE_DROP_ENABLE)
 #define EPROM_HV_ALL_OFF_MASK  (CTRL_VPP_REGULATOR_ENABLE | CTRL_VPP_VPE_DROP_ENABLE | CTRL_VPP_A9_ENABLE | CTRL_VPE_ENABLE)
 
@@ -136,18 +123,16 @@ extern "C" {
  *
  * HIGH is a relative headroom with an absolute floor. It was a flat 500 mV,
  * which is +4.2 % at a 12000 mV target but only +2.0 % at 25000 -- tighter
- * than the instrument can resolve, so it could refuse a correctly set rail on
- * measurement error alone. That affected exactly the 30 database rows at
- * 18000 mV and above, which is the same census Phase 199 was about. The floor
- * keeps all 716 rows below 18000 mV on the identical threshold they had.
+ * than the instrument can resolve, potentially rejecting a correctly set
+ * rail. The absolute floor protects lower-voltage parts.
  *
  * LOW stays at 5 %, comfortably outside the worst case, so it raises no false
  * warning and can now see a real shortfall -- which before calibration it
- * could not, because the reading itself was inflated by more than the window.
+ * could not when uncalibrated readings exceeded the tolerance window.
  *
  * Neither figure is used for ROUTING. RURP_VPP_DROP_PATH_MAX_DELIVERABLE_MV
- * above decides the route from path capability and never from a reading, per
- * v1.40 D-22/D-23. These two improve the verification leg only.
+ * above decides the route from path capability, never from a reading.
+ * These two values affect verification only.
  */
 #define RURP_VPP_HIGH_HEADROOM_PCT 3
 #define RURP_VPP_HIGH_HEADROOM_FLOOR_MV 500
