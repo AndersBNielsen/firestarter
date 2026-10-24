@@ -511,6 +511,134 @@ void test_negative_value_on_a_non_address_field_is_unchanged(void) {
         "author widens the refusal beyond the address field");
 }
 
+
+/* Issue #118: the real firmware reuses one handle for every command. Testing
+ * with newly zeroed handles alone masks the stale-parameter failure mode. */
+static void issue118_callback(firestarter_handle_t*) {}
+
+void test_issue118_second_command_does_not_inherit_chip_or_bus_parameters(void) {
+    firestarter_handle_t h = make_handle(CMD_WRITE);
+    h.data_size = 123;
+    h.data_buffer[0] = 'Z';
+    h.firestarter_operation_main = issue118_callback;
+
+    const char* first =
+        "{\"cmd\":2,\"memory-size\":131072,\"algorithm\":7,"
+        "\"pin-count\":32,\"vpp_mv\":25000,\"pulse-delay\":1800,"
+        "\"read-settling-delay\":80,\"read-strobe-us\":35,"
+        "\"chip-id\":4660,\"page-size\":128,\"region-end\":100000,"
+        "\"flags\":5,\"address\":4096,"
+        "\"bus-config\":{\"bus\":[0,2,3],\"rw-pin\":20,"
+        "\"vpp-pin\":21,\"static-high\":[22]}}";
+
+    TEST_ASSERT_EQUAL_INT(0, parse_json(first, &h));
+    TEST_ASSERT_EQUAL_UINT32(1800, h.pulse_delay);
+    TEST_ASSERT_EQUAL_UINT16(25000, h.vpp_mv);
+    TEST_ASSERT_EQUAL_UINT32(80, h.read_settling_us);
+    TEST_ASSERT_EQUAL_UINT32(35, h.read_strobe_us);
+    TEST_ASSERT_EQUAL_UINT32((uint32_t)1 << 22, h.bus_config.static_high_mask);
+    TEST_ASSERT_EQUAL_UINT8(20, h.bus_config.rw_line);
+    TEST_ASSERT_EQUAL_UINT8(21, h.bus_config.vpp_line);
+    TEST_ASSERT_EQUAL_UINT8(1, h.bus_config.matching_lines);
+
+    const char* second =
+        "{\"cmd\":2,\"memory-size\":65536,\"algorithm\":8,"
+        "\"pin-count\":28,\"vpp_mv\":12500}";
+    TEST_ASSERT_EQUAL_INT(0, parse_json(second, &h));
+    TEST_ASSERT_TRUE(json_memory_params_valid(&h));
+
+    TEST_ASSERT_EQUAL_UINT8(8, h.protocol);
+    TEST_ASSERT_EQUAL_UINT8(28, h.pins);
+    TEST_ASSERT_EQUAL_UINT32(65536, h.mem_size);
+    TEST_ASSERT_EQUAL_UINT16(12500, h.vpp_mv);
+    TEST_ASSERT_EQUAL_UINT32(0, h.address);
+    TEST_ASSERT_EQUAL_UINT32(0, h.pulse_delay);
+    TEST_ASSERT_EQUAL_UINT32(0, h.read_settling_us);
+    TEST_ASSERT_EQUAL_UINT32(0, h.read_strobe_us);
+    TEST_ASSERT_EQUAL_UINT16(0, h.ctrl_flags);
+    TEST_ASSERT_EQUAL_UINT16(0, h.chip_id);
+    TEST_ASSERT_EQUAL_UINT16(0, h.page_size);
+    TEST_ASSERT_EQUAL_UINT32(0, h.region_end);
+    TEST_ASSERT_EQUAL_UINT32(0xFFFF, h.bus_config.address_mask);
+    TEST_ASSERT_EQUAL_UINT32(0, h.bus_config.static_high_mask);
+    TEST_ASSERT_EQUAL_UINT8(0, h.bus_config.matching_lines);
+    TEST_ASSERT_EQUAL_UINT8(0xFF, h.bus_config.address_lines[0]);
+    TEST_ASSERT_EQUAL_UINT8(0xFF, h.bus_config.address_lines[3]);
+    TEST_ASSERT_EQUAL_UINT8(0xFF, h.bus_config.address_lines[19]);
+    TEST_ASSERT_EQUAL_UINT8(0xFF, h.bus_config.rw_line);
+    TEST_ASSERT_EQUAL_UINT8(0xFF, h.bus_config.vpp_line);
+
+    /* The parser must not memset the entire global handle. */
+    TEST_ASSERT_EQUAL_UINT8(CMD_WRITE, h.cmd);
+    TEST_ASSERT_EQUAL_UINT32(123, h.data_size);
+    TEST_ASSERT_EQUAL_CHAR('Z', h.data_buffer[0]);
+    TEST_ASSERT_TRUE(h.firestarter_operation_main == issue118_callback);
+}
+
+void test_issue118_eprom_default_pulse_is_for_current_chip(void) {
+    firestarter_handle_t h = make_handle(CMD_WRITE);
+    TEST_ASSERT_EQUAL_INT(0, parse_json(
+        "{\"cmd\":2,\"memory-size\":65536,\"algorithm\":7,"
+        "\"pin-count\":28,\"vpp_mv\":25000,\"pulse-delay\":1800}", &h));
+    configure_memory(&h);
+    TEST_ASSERT_EQUAL_UINT32(1800, h.pulse_delay);
+
+    /* New chip, pulse-delay absent: 0 from reset makes protocol 0x08
+     * select its 100us default instead of using the previous 1800us. */
+    h.response_code = RESPONSE_CODE_OK;
+    TEST_ASSERT_EQUAL_INT(0, parse_json(
+        "{\"cmd\":2,\"memory-size\":32768,\"algorithm\":8,"
+        "\"pin-count\":28,\"vpp_mv\":12500}", &h));
+    TEST_ASSERT_EQUAL_UINT32(0, h.pulse_delay);
+    configure_memory(&h);
+    TEST_ASSERT_EQUAL_UINT32(100, h.pulse_delay);
+
+    /* The shipped Python host explicitly sends pulse-delay: 0 when
+     * it wants the firmware default. Preserve that wire contract. */
+    h.response_code = RESPONSE_CODE_OK;
+    TEST_ASSERT_EQUAL_INT(0, parse_json(
+        "{\"cmd\":2,\"memory-size\":2048,\"algorithm\":11,"
+        "\"pin-count\":24,\"vpp_mv\":25000,\"pulse-delay\":0}", &h));
+    configure_memory(&h);
+    TEST_ASSERT_EQUAL_UINT32(500, h.pulse_delay);
+}
+
+void test_issue118_missing_required_memory_parameters_are_rejected(void) {
+    const char* incomplete[] = {
+        "{\"cmd\":2,\"algorithm\":7,\"pin-count\":28,\"vpp_mv\":12500}",
+        "{\"cmd\":2,\"memory-size\":65536,\"pin-count\":28,\"vpp_mv\":12500}",
+        "{\"cmd\":2,\"memory-size\":65536,\"algorithm\":7,\"vpp_mv\":12500}",
+        "{\"cmd\":2,\"memory-size\":65536,\"algorithm\":7,\"pin-count\":28}",
+        "{\"cmd\":2,\"memory-size\":0,\"algorithm\":7,\"pin-count\":28,\"vpp_mv\":12500}",
+        "{\"cmd\":2,\"memory-size\":65536,\"algorithm\":7,\"pin-count\":28,\"vpp_mv\":0}"
+    };
+    firestarter_handle_t h = make_handle(CMD_WRITE);
+    TEST_ASSERT_EQUAL_INT(0, parse_json(
+        "{\"cmd\":2,\"memory-size\":65536,\"algorithm\":7,"
+        "\"pin-count\":28,\"vpp_mv\":12500}", &h));
+    TEST_ASSERT_TRUE(json_memory_params_valid(&h));
+    for (size_t i = 0; i < sizeof(incomplete) / sizeof(incomplete[0]); i++) {
+        TEST_ASSERT_EQUAL_INT(0, parse_json(incomplete[i], &h));
+        TEST_ASSERT_FALSE_MESSAGE(json_memory_params_valid(&h),
+            "missing/zero required field must not be inherited from earlier chip");
+    }
+}
+
+void test_issue118_rejected_parse_still_clears_prior_parameters(void) {
+    firestarter_handle_t h = make_handle(CMD_WRITE);
+    TEST_ASSERT_EQUAL_INT(0, parse_json(
+        "{\"cmd\":2,\"memory-size\":65536,\"algorithm\":7,"
+        "\"pin-count\":28,\"vpp_mv\":12500,\"pulse-delay\":400}", &h));
+    TEST_ASSERT_EQUAL_INT(-1, parse_json("{\"cmd\":2,\"address\":-256}", &h));
+    TEST_ASSERT_EQUAL_UINT32(0, h.mem_size);
+    TEST_ASSERT_EQUAL_UINT8(0, h.protocol);
+    TEST_ASSERT_EQUAL_UINT8(0, h.pins);
+    TEST_ASSERT_EQUAL_UINT16(0, h.vpp_mv);
+    TEST_ASSERT_EQUAL_UINT32(0, h.pulse_delay);
+    TEST_ASSERT_EQUAL_UINT8(0xFF, h.bus_config.rw_line);
+    TEST_ASSERT_FALSE(json_memory_params_valid(&h));
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -539,5 +667,9 @@ int main(int argc, char** argv) {
     RUN_TEST(test_negative_address_is_refused_not_clamped_to_zero);
     RUN_TEST(test_positive_address_still_parses_to_its_value);
     RUN_TEST(test_negative_value_on_a_non_address_field_is_unchanged);
+    RUN_TEST(test_issue118_second_command_does_not_inherit_chip_or_bus_parameters);
+    RUN_TEST(test_issue118_eprom_default_pulse_is_for_current_chip);
+    RUN_TEST(test_issue118_missing_required_memory_parameters_are_rejected);
+    RUN_TEST(test_issue118_rejected_parse_still_clears_prior_parameters);
     return UNITY_END();
 }

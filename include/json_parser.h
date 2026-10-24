@@ -18,6 +18,8 @@ extern "C" {
 
     uint8_t json_get_cmd(const char* json, jsmntok_t* tokens, int token_count, firestarter_handle_t* handle);
     int json_parse(const char* json, jsmntok_t* tokens, int token_count, firestarter_handle_t* handle);
+    /* Validate required memory-command fields after parsing, before hardware setup. */
+    bool json_memory_params_valid(const firestarter_handle_t* handle);
     /*
  * json_parse_config result bits. Negative is still a parse error; 0 still
  * means "nothing to do". A bitmask rather than a single 1 because one command
