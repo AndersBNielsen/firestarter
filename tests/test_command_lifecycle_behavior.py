@@ -40,6 +40,7 @@ static rurp_register_t latch[256] = {};
 unsigned long millis() { return fake_ms; }
 extern "C" void rurp_load_config() {}
 extern "C" void rurp_board_setup() {}
+extern "C" uint8_t rurp_get_physical_hardware_revision() { return 0; }
 extern "C" rurp_configuration_t* rurp_get_config() {
     static rurp_configuration_t config = {};
     return &config;
