@@ -50,13 +50,15 @@
 #define CMD_WRITE 2
 #define CMD_ERASE 3
 
-// Reserved wire command 4 (former blank-check). Never reuse: older hosts
-// could otherwise invoke an unrelated operation. It must return UNKNOWN_CMD.
+// Wire command 4 (former blank-check) retired in 3.1.0. Reserved forever:
+// older hosts can still send this ordinal, which must return UNKNOWN_CMD
+// instead of invoking an unrelated operation.
 
 #define CMD_CHECK_CHIP_ID 5
 
-// Reserved wire command 6 (former standalone verify). Never reuse: older
-// hosts could otherwise invoke an unrelated operation. It must return UNKNOWN_CMD.
+// Wire command 6 (former standalone verify) retired in 3.1.0. Reserved
+// forever: older hosts can still send this ordinal, which must return
+// UNKNOWN_CMD instead of invoking an unrelated operation.
 
 #if DEV_TOOLS
 #define CMD_DEV_ADDRESS 7
@@ -149,8 +151,9 @@ static inline bool is_memory_cmd(uint8_t cmd) {
 #define FLAG_CAN_ERASE 0x02
 #define FLAG_SKIP_ERASE 0x04
 
-// Reserved wire flag 0x08 (former skip-blank-check). Never reuse: older
-// hosts may still send this bit.
+// Wire control flag 0x08 (former skip-blank-check) retired in 3.1.0.
+// Reserved forever: older hosts may still transmit this bit, so it must
+// not be assigned a different control meaning.
 
 #define FLAG_VPE_AS_VPP 0x10
 
