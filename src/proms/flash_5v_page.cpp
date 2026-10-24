@@ -68,11 +68,8 @@ void flash_5v_page_write_init(firestarter_handle_t* handle) {
             return;
         }
     }
-    // No pre-write blank check: flash4 auto-erases per page during the write loop,
-    // so it was a false precondition, not a safety net. As of release 3.1.0 the
-    // host owns this refusal instead -- do not restore a firmware-side
-    // conditional here; the control flag that used to gate it is retired and
-    // gone.
+    // Flash4 auto-erases each page, so requiring a blank chip before a
+    // write would reject valid operations.
 }
 
 void flash_5v_page_write_execute(firestarter_handle_t* handle) {

@@ -114,45 +114,21 @@ typedef struct {
 #define FIELD_WIDTH_MASK  0x0F
 #define FIELD_POLICY_MASK 0x80
 
-/*
- * FIELD_POLICY_REJECT_NEGATIVE -- a third row policy, set on exactly one
- * row (key_address). simple_strtoul consumes only `[0-9]`, so a leading
- * '-' makes its loop body never run and the value converts to 0 -- a
- * fail-open inside a parser whose other policies (FIELD_MASK above) are
- * fail-closed: `-256` on the wire is today indistinguishable from a
- * legitimate address-0 frame. The scope is the address field alone,
- * because the same simple_strtoul converter serves ctrl_flags, bus-config
- * address lines and static-high lines, and widening the refusal to those
- * would change wire behaviour for six fields no requirement names. The
- * host already refuses a negative start address before the wire
- * (write_blank_guard.require_non_negative_address, Phase 203); this bit is
- * defence-in-depth against a non-firestarter host or a corrupted frame.
- */
+/* simple_strtoul parses a leading '-' as zero. Reject a negative address
+ * instead of silently treating it as address 0; other fields retain their
+ * established wire parsing policies. */
 #define FIELD_POLICY_REJECT_NEGATIVE 0x40
 
-/*
- * FIELD -- SATURATE policy (ordinal fields). `offset` and `width` are both
- * derived from the compiler (offsetof, sizeof(((firestarter_handle_t*)0)->
- * member)) -- never a literal -- because the AVR and native struct layouts
- * differ at every member from `protocol` down (157-before-figures.md §6),
- * so a hand-written offset or width would be correct on one architecture
- * and wrong on the other. store_field's raw memcpy below is only safe
- * because both numbers come from the type.
- */
+/* Derive descriptor offsets and widths from firestarter_handle_t itself.
+ * AVR and native struct layouts differ; hard-coded offsets would write the
+ * wrong fields, and store_field relies on these compiler-derived sizes. */
 #define FIELD(k, member, cl)                                                 \
     { (k), (uint16_t)(cl), (uint8_t)offsetof(firestarter_handle_t, member),  \
       (uint8_t)sizeof(((firestarter_handle_t*)0)->member) }
 
-/*
- * FIELD_MASK -- MASK policy (bitmask fields). Refuses to saturate a bitmask
- * to its type maximum: on `ctrl_flags` that would set every control flag at
- * once, including FLAG_FORCE, FLAG_SKIP_ERASE and FLAG_VPE_AS_VPP --
- * a fail-OPEN where the required behaviour is fail-closed.
- * This preserves today's width-limited truncation for a bitmask instead,
- * and does nothing else -- it does not attempt to reject an out-of-range
- * bitmask, because `reject` needs a new message id, and message ids are
- * generated from the catalog rather than written here.
- */
+/* Mask bitfields to their storage width instead of saturating: saturation
+ * of ctrl_flags could enable FLAG_FORCE, FLAG_SKIP_ERASE and VPE_AS_VPP
+ * together. Width-limited masking preserves the existing wire policy. */
 #define FIELD_MASK(k, member)                                                \
     { (k), (uint16_t)0, (uint8_t)offsetof(firestarter_handle_t, member),     \
       (uint8_t)(sizeof(((firestarter_handle_t*)0)->member) | FIELD_POLICY_MASK) }
@@ -167,47 +143,34 @@ typedef struct {
       (uint8_t)(sizeof(((firestarter_handle_t*)0)->member) | FIELD_POLICY_REJECT_NEGATIVE) }
 
 static const field_desc_t key_parsers[] PROGMEM = {
-    /* memory-size -> handle->mem_size */
+    
     FIELD(key_mem_size, mem_size, 0),
-    /* address -> handle->address. REJECT_NEGATIVE policy: see that
-     * macro's own comment above for why this row alone refuses a leading
-     * '-' instead of silently converting to 0. */
+    
     FIELD_REJECT_NEGATIVE(key_address, address, 0),
-    /* flags -> handle->ctrl_flags. MASK policy: see FIELD_MASK's own
-     * comment above for why this row never saturates. */
+    
     FIELD_MASK(key_flags, ctrl_flags),
-    /* chip-id -> handle->chip_id */
+    
     FIELD(key_chip_id, chip_id, 0),
-    /* pin-count -> handle->pins */
+    
     FIELD(key_pin_count, pins, 0),
-    /* pulse-delay -> handle->pulse_delay */
+    
     FIELD(key_pulse_delay, pulse_delay, 0),
-    /* vpp_mv -> handle->vpp_mv */
+    
     FIELD(key_vpp_mv, vpp_mv, 0),
-    /* algorithm -> handle->protocol (the primary dispatch key) */
+    
     FIELD(key_algorithm, protocol, 0),
-    /* read-settling-delay -> handle->read_settling_us, clamped to
-     * READ_TIMING_MAX_US. */
+    
     FIELD(key_read_settling, read_settling_us, READ_TIMING_MAX_US),
-    /* read-strobe-us -> handle->read_strobe_us, clamped to
-     * READ_TIMING_MAX_US. */
+    
     FIELD(key_read_strobe, read_strobe_us, READ_TIMING_MAX_US),
-    /* page-size -> handle->page_size */
+    
     FIELD(key_page_size, page_size, 0),
-    /* region-end -> handle->region_end */
+    
     FIELD(key_region_end, region_end, 0),
 };
 
-/*
- * Compile-time layout guards only -- zero flash cost. _Static_assert in a C
- * translation unit is a NEW IDIOM for this repository (the only
- * pre-existing static assert is the C++ one at include/eprom_params.h:62,
- * inert in every C TU); a future reader must not delete these thinking they
- * are something else. Each one proves an offset FITS the uint8_t offset
- * column and a width fits the 32-bit store -- it does NOT prove the table
- * writes the right member, which only the native parse tests do (ceiling
- * 7).
- */
+/* Ensure all descriptor offsets fit uint8_t and their fields fit a 32-bit
+ * store. Native parsing tests additionally verify each descriptor's target. */
 _Static_assert(offsetof(firestarter_handle_t, mem_size) < 256 &&
                    sizeof(((firestarter_handle_t*)0)->mem_size) <= 4,
                "mem_size: a struct reorder moved it past the uint8_t offset column's range, "
@@ -354,7 +317,7 @@ int json_parse(const char* json, jsmntok_t* tokens, int token_count, firestarter
         // The 'cmd' key is handled by json_get_cmd before this function is called.
         // We just need to identify and skip it here.
         if (jsoneq(json, key_token, "cmd") == 0 || jsoneq(json, key_token, "state") == 0) {
-            token_idx += 2; // Skip key and value
+            token_idx += 2;
             continue;
         }
 
@@ -368,7 +331,7 @@ int json_parse(const char* json, jsmntok_t* tokens, int token_count, firestarter
                     return -1; // Refused: this row's value cannot represent a negative number
                 }
                 store_field(handle, &key_parsers[j], simple_strtoul(value_str));
-                token_idx += 2; // Skip key and simple value
+                token_idx += 2;
                 found = true;
                 break;
             }
@@ -381,7 +344,7 @@ int json_parse(const char* json, jsmntok_t* tokens, int token_count, firestarter
         if (jsoneq(json, key_token, "bus-config") == 0) {
             int consumed = parse_bus_config(json, &tokens[token_idx], token_count - token_idx, handle);
             if (consumed < 0) return -1;
-            token_idx += 1 + consumed; // Advance past the key and the entire object value
+            token_idx += 1 + consumed;
         } else {
             // Unknown field — skip key + value token (forward-compatible with new Python fields)
             token_idx += 2;

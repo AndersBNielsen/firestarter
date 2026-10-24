@@ -133,13 +133,9 @@ void configure_eeprom28c(firestarter_handle_t* handle) {
     LOG_DEBUG_ID_SUB(DBG_CONFIGURING_EEPROM_28C);
     // AT28C page write timing requires fast consecutive writes; no pulse delay needed
     handle->pulse_delay = 0;
-    // Do NOT add a default: arm here. configure_memory pre-sets the generic
-    // main for CMD_READ/CMD_WRITE before calling this, so a blanket default
-    // would overwrite it and refuse read on every 0x0D chip. (This comment
-    // used to also name the verify command's wire ordinal here, retired in
-    // 3.1.0; configure_memory's switch pre-sets only CMD_READ and CMD_WRITE
-    // now.) Unsupported commands are refused generically by the operation
-    // layer's NULL-main guard instead.
+    // Preserve generic READ/WRITE callbacks installed by configure_memory.
+    // Unsupported commands retain NULL main and are refused by the operation
+    // layer; a default arm would unintentionally overwrite READ.
     switch (handle->cmd) {
         case CMD_WRITE:
             handle->firestarter_operation_init = eeprom28c_write_init;
@@ -371,13 +367,8 @@ void eeprom28c_write_init(firestarter_handle_t* handle) {
         // sequence emitted there is no internal write cycle to wait for.
         LOG_WARN_ID(MSG_WARN_SDP_UNLOCK_SKIPPED);
     }
-    // No pre-write blank check on this protocol: the silicon auto-erases per page
-    // during the write, and verify_page_readback checks every page afterwards. A
-    // blank check here was a false precondition that made a non-blank part
-    // un-writable without a flag. As of release 3.1.0 the host owns this
-    // refusal instead -- do not restore a firmware-side conditional here; the
-    // control flag that used to gate it is retired and gone.
-    // `blank` remains available as its own step.
+    // AT28C pages erase during writing and are verified by readback.
+    // Requiring a blank chip first would reject valid page writes.
 }
 
 // Resolve the validated flush mask from a delivered page-size. Returns

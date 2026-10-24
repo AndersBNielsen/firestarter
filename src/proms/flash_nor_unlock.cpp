@@ -67,14 +67,8 @@ void flash_nor_unlock_generic_init(firestarter_handle_t* handle) {
 
 
 void flash_nor_unlock_write_init(firestarter_handle_t* handle) {
-    // One-time init (chip-ID + erase + erase-settle delay), gated behind
-    // is_operation_in_progress so a future multi-call operation could run
-    // it exactly ONCE across repeated re-invocations of this function.
-    // The last operation that needed this guard was the region-scoped
-    // blank check; it left the firmware in 3.1.0 and nothing sets the
-    // flag anymore, so this guard currently always reads true. Retained
-    // as defence against a future multi-call operation, at zero flash
-    // cost either way.
+    // Guard chip-ID/erase initialization against repeated calls from a
+    // multi-step operation. Current write commands do not set this flag.
     if (!is_operation_in_progress(handle)) {
         if (handle->chip_id > 0) {
             flash_nor_unlock_check_chip_id_execute(handle);
