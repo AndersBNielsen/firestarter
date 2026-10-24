@@ -11,6 +11,7 @@
 #include "rurp_shield.h"
 #include "rurp_pinout.h"
 #include "logging_id.h"
+#include "timeout_utils.h"
 #include <stdio.h>
 
 
@@ -31,8 +32,8 @@ void flash_util_verify_operation(firestarter_handle_t* handle, uint8_t expected_
 
     handle->firestarter_set_control_register(handle, CTRL_READ_WRITE, 1);
 
-    unsigned long timeout = millis() + 150;
-    while (millis() < timeout) {
+    const uint32_t started_ms = (uint32_t)millis();
+    while (!fs_timeout_expired(started_ms, 150U, (uint32_t)millis())) {
         // Data Polling: Read from the address and check DQ7.
         // When the write is complete, the data read back will have the same DQ7 as the data written.
         if ((fu_flash_data_poll() & 0x80) == (expected_data & 0x80)) {

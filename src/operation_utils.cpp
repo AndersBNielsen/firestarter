@@ -14,6 +14,7 @@
 #include "logging_id.h"
 #include "messages.h"
 #include "rurp_shield.h"
+#include "timeout_utils.h"
 
 #define ERROR -1
 #define RETURN 0
@@ -92,8 +93,8 @@ bool op_execute_function(void (*callback)(firestarter_handle_t* handle), firesta
 }
 
 bool op_wait_for_ack(firestarter_handle_t* handle) {
-    unsigned long timeout = millis() + 1000;
-    while (millis() < timeout) {
+    const uint32_t started_ms = (uint32_t)millis();
+    while (!fs_timeout_expired(started_ms, 1000U, (uint32_t)millis())) {
         op_message_type msg_type = op_get_message(handle);
         if (msg_type == OP_MSG_ACK) {
             return true;
