@@ -21,6 +21,7 @@
 #include "rurp_voltage_math.h"
 #include "rurp_config_migrate.h"
 #include "version.h"
+#include "timeout_utils.h"
 #if DEV_TOOLS
 #include "dev_tools.h"
 #endif
@@ -34,7 +35,7 @@ void command_done(firestarter_handle_t* handle);
 
 firestarter_handle_t handle;
 
-unsigned long timeout = 0;
+uint32_t timeout_started_ms = 0;
 
 void setup() {
     rurp_load_config();
@@ -214,7 +215,7 @@ void command_done(firestarter_handle_t* handle) {
 }
 
 void loop() {
-    if (handle.cmd != CMD_IDLE && timeout < millis()) {
+    if (handle.cmd != CMD_IDLE && fs_timeout_expired(timeout_started_ms, TIMEOUT_MS, (uint32_t)millis())) {
         LOG_ERROR_ID_U8(MSG_ERR_CMD_TIMEOUT, handle.cmd);
         command_done(&handle);
     } else if (handle.cmd == CMD_IDLE) {
@@ -314,5 +315,5 @@ void loop() {
 }
 
 void op_reset_timeout() {
-    timeout = millis() + TIMEOUT_MS;
+    timeout_started_ms = (uint32_t)millis();
 }
