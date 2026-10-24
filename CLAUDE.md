@@ -40,17 +40,18 @@ tag into `include/version.h` before it builds, because the CMake build of py32f0
 
 1. `pio test -e native`.
 2. `pio test -e native_nodevtools`.
-3. `pytest tests/ -v`. This step needs full git history, so the checkout sets `fetch-depth: 0`.
+3. `pytest tests/ -v` (host compile-and-run regression tests).
 4. `pio run`, without and then with `-D DEV_TOOLS=1`.
 
 `release.yml` runs the same tests, then builds the configuration that the tag asks for.
 
-**This repository has two test trees.** `test/` holds the PlatformIO Unity suites. `tests/` holds a
-Python suite. Most Python tests scan firmware source text. These source scans are legacy and
-pending removal: add none, and do not count one as a guard. Refer to
-`agent-os/standards/testing/no-source-introspection.md` in the meta repository. Both trees run in
-`build.yml`. No CI job
-runs a `pio` environment other than `native` and `native_nodevtools`.
+**Both test trees exercise code behavior.** `test/` holds the PlatformIO Unity suites. `tests/`
+holds Python harness tests that compile and execute production code or preprocess production
+safety guards. Do not add tests that enforce comments, exact source snippets, line numbers,
+Git blob hashes, commit ancestry, design-record prose, or historical development decisions.
+Refer to `agent-os/standards/testing/no-source-introspection.md` in the meta repository.
+Both trees run in `build.yml`. No CI job runs a `pio` environment other than `native` and
+`native_nodevtools`.
 
 ### Which channel ships dev tools
 
@@ -163,8 +164,8 @@ VPE path.
 **High-voltage teardown.** Each **error** exit from the write path goes through one exit wrapper.
 That wrapper disables all high-voltage routes in the control register. A **successful** block
 leaves the route on, so the next block does not pay the settle time again. `command_done()` disables
-the route at the end of the operation. No test checks this behaviour. A legacy source contract
-(`tests/golden/eprom_params_citations.json`) scans the text. It is not a guard.
+the route at the end of the operation. This hardware-level teardown sequence still needs a
+focused executable regression test; source text checks must not substitute for one.
 
 **No overprogram.** No 27C row applies an overprogram pulse. No 27C row uses DQ7 polling. DQ7
 polling is a flash-family method.
@@ -183,10 +184,9 @@ Two limits apply:
   3. When that buffer is full, the next frame is lost without an error.
   4. A lost `MSG_ERR_MAX_PULSES` frame changes a program failure into a host transport timeout.
 
-  No test checks this limit. A legacy source contract
-  (`tests/test_progress_emission_is_leonardo_only.py`) scans the text. It is not a guard. No native
-  environment compiles `src/boards/uno_rurp_shield.cpp`.
-  The native capture stub has no `com_mode` gate.
+  No behavior test currently covers this board-specific transport limit. Native tests do not
+  compile `src/boards/uno_rurp_shield.cpp`, and the capture stub lacks its `com_mode` gate.
+  Verify the behavior on the target board before changing this path.
 
 Per-row differences:
 
@@ -391,19 +391,12 @@ the defines, update that wiki page in the same change. Nothing checks this autom
 config storage, the three-tier flash path, the PCB checklist (rows R1–R7), the flash budget and the
 USB identity. `platform/py32f071/README.md` gives the status and points to it.
 
-Four tests read the record. Each has violating inputs:
+Treat `DESIGN.md` as design documentation, not a test oracle. Changes to flash geometry, the
+configuration region or hardware assumptions require review against the actual linker and
+firmware, plus an appropriate executable test. Neither comment presence nor matching prose
+is evidence of correct hardware behavior.
 
-- `tests/test_flash_path_record_sync.py` — the flash tiers, the PCB rows, the USB ship gate and the
-  socket-empty sentence (also required in the README).
-- `tests/test_flash_geometry_record_matches_linker.py` — the page, sector and flash values in the
-  record agree with `platform/py32f071/linker/PY32F071xB_FLASH.ld`.
-- `tests/test_config_storage_design_record.py` — the geometry citations, the commit steps, the
-  validation order and `CONFIG_MAGIC`.
-- `tests/test_py32_flash_map.py` — the linker cites the record, and the recorded host range agrees
-  with the linker regions.
-
-**When you change a fact in `DESIGN.md`, change the linker script or source in the same commit.**
-Some tests plant a mutation of the real record under `tmp_path`, so they need a clean tree.
+**When you change a fact in `DESIGN.md`, update the linker script or source in the same commit.**
 
 ## Native (Host) Test Environment
 

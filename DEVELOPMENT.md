@@ -31,14 +31,15 @@ pio run -t upload -e uno       # flash a connected board
 pio run -t monitor -e uno      # serial monitor, 250000 baud
 ```
 
-Replace `uno` with `uno328pb` or `leonardo` for the other boards. The Python checks are in
-`tests/`:
+Replace `uno` with `uno328pb` or `leonardo` for the other boards. Additional Python
+regressions under `tests/` compile and execute production firmware code:
 
 ```bash
 python3 -m pytest tests/
 ```
 
-Some of these tests need a clean working tree. Commit your change before you run them.
+Tests assert observable results from compiled code, rather than the spelling of source
+comments, exact file hashes or Git history.
 
 ## Releases
 
