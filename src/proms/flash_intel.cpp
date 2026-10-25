@@ -120,29 +120,47 @@ void flash_intel_cleanup(firestarter_handle_t* handle) {
     handle->firestarter_set_control_register(handle, CTRL_VPP_REGULATOR_ENABLE | CTRL_VPP_P1_ENABLE, 0);
 }
 
+// Intel status register [28F001BX, "Status Register Definitions"; the same
+// layout on the 28F008SA and 28F800B5]:
+//   SR.7 (0x80) write state machine ready
+//   SR.5 (0x20) erase error
+//   SR.4 (0x10) program error -- SR.4 and SR.5 together: command sequence error
+//   SR.3 (0x08) VPP low, the operation aborted
+// The error bits stay set until a Clear Status Register (0x50), so a failure
+// clears them before it returns the part to read-array mode; otherwise the
+// next operation would read the old error as its own.
+#define INTEL_SR_READY 0x80
+#define INTEL_SR_ERASE_ERROR 0x20
+#define INTEL_SR_PROGRAM_ERROR 0x10
+#define INTEL_SR_VPP_LOW 0x08
+#define INTEL_CMD_CLEAR_STATUS 0x50
+#define INTEL_CMD_READ_ARRAY 0xFF
+
 static bool flash_intel_poll_sr(firestarter_handle_t* handle, uint16_t timeout_ms) {
     const uint32_t started_ms = (uint32_t)millis();
+    uint8_t msg_id = MSG_ERR_INTEL_SR_TIMEOUT;
     while (!fs_timeout_expired(started_ms, (uint32_t)timeout_ms, (uint32_t)millis())) {
         uint8_t sr = handle->firestarter_get_data(handle, 0);
-        if (sr & 0x80) {
-            if (sr & 0x10) {
-                LOG_ERROR_ID(MSG_ERR_INTEL_VPP);
-                handle->response_code = RESPONSE_CODE_ERROR;
-                handle->firestarter_set_data(handle, 0, 0xFF);
-                return false;
+        if (sr & INTEL_SR_READY) {
+            // VPP low first: it is the cause when it is set with the others.
+            if (sr & INTEL_SR_VPP_LOW) {
+                msg_id = MSG_ERR_INTEL_VPP;
+            } else if ((sr & (INTEL_SR_ERASE_ERROR | INTEL_SR_PROGRAM_ERROR)) ==
+                       (INTEL_SR_ERASE_ERROR | INTEL_SR_PROGRAM_ERROR)) {
+                msg_id = MSG_ERR_CMD;
+            } else if (sr & (INTEL_SR_ERASE_ERROR | INTEL_SR_PROGRAM_ERROR)) {
+                // The catalog has one id for both: "Intel flash: program error".
+                msg_id = MSG_ERR_INTEL_PROGRAM;
+            } else {
+                return true;
             }
-            if (sr & 0x08) {
-                LOG_ERROR_ID(MSG_ERR_INTEL_PROGRAM);
-                handle->response_code = RESPONSE_CODE_ERROR;
-                handle->firestarter_set_data(handle, 0, 0xFF);
-                return false;
-            }
-            return true;
+            handle->firestarter_set_data(handle, 0, INTEL_CMD_CLEAR_STATUS);
+            break;
         }
     }
-    LOG_ERROR_ID(MSG_ERR_INTEL_SR_TIMEOUT);
+    LOG_ERROR_ID(msg_id);
     handle->response_code = RESPONSE_CODE_ERROR;
-    handle->firestarter_set_data(handle, 0, 0xFF);
+    handle->firestarter_set_data(handle, 0, INTEL_CMD_READ_ARRAY);
     return false;
 }
 
