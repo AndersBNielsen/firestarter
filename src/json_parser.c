@@ -367,8 +367,23 @@ int json_parse(const char* json, jsmntok_t* tokens, int token_count, firestarter
  * remain optional. pulse-delay 0 means "use protocol default" on EPROMs.
  */
 bool json_memory_params_valid(const firestarter_handle_t* handle) {
-    return handle->mem_size != 0 && handle->protocol != 0 &&
-           handle->pins != 0 && handle->vpp_mv != 0;
+    if (handle->mem_size == 0 || handle->protocol == 0 ||
+        handle->pins == 0 || handle->vpp_mv == 0) {
+        return false;
+    }
+    // Reject bad cursors before configure_memory() touches bus registers.
+    // Read uses the whole device; writes may have an exclusive region end.
+    if (handle->cmd == CMD_READ) {
+        return handle->address <= handle->mem_size;
+    }
+    if (handle->cmd == CMD_WRITE) {
+        uint32_t end = handle->region_end;
+        if (end == 0 || end > handle->mem_size) {
+            end = handle->mem_size;
+        }
+        return handle->address <= end;
+    }
+    return true;
 }
 
 int json_parse_config(const char* json, jsmntok_t* tokens, int token_count, rurp_configuration_t* config, firestarter_handle_t* handle) {
