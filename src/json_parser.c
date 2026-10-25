@@ -19,9 +19,6 @@ int parse_bus_config(const char* json, jsmntok_t* tokens, int token_count, fires
 
 bool get_flags(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle);
 
-bool get_rw_pin(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle);
-bool get_vpp_pin(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle);
-
 bool get_r1(const char* json, jsmntok_t* tokens, int pos, rurp_configuration_t* config);
 bool get_r2(const char* json, jsmntok_t* tokens, int pos, rurp_configuration_t* config);
 bool get_rev(const char* json, jsmntok_t* tokens, int pos, rurp_configuration_t* config);
@@ -501,8 +498,31 @@ uint8_t get_cmd(const char* json, jsmntok_t* tokens, int pos) {
 }
 
 /*
+ * Bus lines the shield drives: the two 8-bit address registers and the
+ * control register's address and R/W bits. mem_util_remap_address_bus uses
+ * a line as a shift count into a 32-bit value, so a line outside the bus is
+ * refused before any shift. The 3.3 binary command frame has the same bound
+ * (CF_BUS_LINES).
+ */
+#define JSON_BUS_LINES 24
+
+/* One bus line, or JSON_BUS_LINES for a nested value, a sign, a non-number
+ * or a line outside the bus. */
+static uint8_t json_bus_line(const char* json, const jsmntok_t* tok) {
+    const char* s = json + tok->start;
+    if (tok->type != JSMN_PRIMITIVE || *s < '0' || *s > '9') {
+        return JSON_BUS_LINES;
+    }
+    unsigned long line = simple_strtoul(s);
+    return line < JSON_BUS_LINES ? (uint8_t)line : JSON_BUS_LINES;
+}
+
+/*
  * tokens[0] is the "bus-config" value and token_count is the size of its
- * whole subtree. Returns 0, or -1 to refuse the frame.
+ * whole subtree. Returns 0, or -1 to refuse the frame. Each line is checked
+ * before it is shifted or stored: an address line outside the bus or used
+ * twice, more address lines than ADDRESS_LINES_SIZE, and a static-high, R/W
+ * or VPP line outside the bus refuse the frame.
  */
 int parse_bus_config(const char* json, jsmntok_t* tokens, int token_count, firestarter_handle_t* handle) {
     if (tokens[0].type != JSMN_OBJECT) {
@@ -518,37 +538,54 @@ int parse_bus_config(const char* json, jsmntok_t* tokens, int token_count, fires
         }
         jsmntok_t* key_token = &tokens[current_token_idx];
 
-        if (jsoneq(json, key_token, "bus") == 0) {
-            jsmntok_t* array_token = &tokens[current_token_idx + 1];
-            if (array_token->type != JSMN_ARRAY) return -1;
+        jsmntok_t* value_token = key_token + 1;
+        // Every element of an array must lie inside the pair's tokens.
+        if (value_token->type == JSMN_ARRAY && value_token->size > next_idx - current_token_idx - 2) {
+            return -1;
+        }
 
+        if (jsoneq(json, key_token, "bus") == 0) {
+            jsmntok_t* array_token = value_token;
             int bus_array_size = array_token->size;
+            if (array_token->type != JSMN_ARRAY || bus_array_size > ADDRESS_LINES_SIZE) return -1;
 
             handle->bus_config.matching_lines = 0xff;
-            for (int j = 0; j < bus_array_size && j < ADDRESS_LINES_SIZE; j++) {
+            for (int j = 0; j < bus_array_size; j++) {
                 // Elements are leaf tokens up to the first nested one, so
                 // array_token[1 + j] is element j until that one refuses.
-                if (array_token[1 + j].type != JSMN_PRIMITIVE) return -1;
-                handle->bus_config.address_lines[j] = simple_strtoul(json + array_token[1 + j].start);
-                handle->bus_config.address_mask |= 1UL << handle->bus_config.address_lines[j];
-                if (handle->bus_config.matching_lines == 0xff && handle->bus_config.address_lines[j] != j) {
+                uint8_t line = json_bus_line(json, &array_token[1 + j]);
+                if (line >= JSON_BUS_LINES) return -1;
+                uint32_t bit = (uint32_t)1 << line;
+                if (handle->bus_config.address_mask & bit) return -1;  // A line used twice
+                handle->bus_config.address_lines[j] = line;
+                handle->bus_config.address_mask |= bit;
+                if (handle->bus_config.matching_lines == 0xff && line != j) {
                     handle->bus_config.matching_lines = j;
                 }
             }
             if (handle->bus_config.matching_lines == 0xff) { handle->bus_config.matching_lines = bus_array_size; }
             if (bus_array_size < ADDRESS_LINES_SIZE) { handle->bus_config.address_lines[bus_array_size] = 0xFF; }
         } else if (jsoneq(json, key_token, "static-high") == 0) {
-            jsmntok_t* array_token = &tokens[current_token_idx + 1];
+            jsmntok_t* array_token = value_token;
             if (array_token->type != JSMN_ARRAY) return -1;
 
             int sh_array_size = array_token->size;
             for (int j = 0; j < sh_array_size; j++) {
-                if (array_token[1 + j].type != JSMN_PRIMITIVE) return -1;
-                uint8_t line = simple_strtoul(json + array_token[1 + j].start);
-                handle->bus_config.static_high_mask |= 1UL << line;
+                uint8_t line = json_bus_line(json, &array_token[1 + j]);
+                if (line >= JSON_BUS_LINES) return -1;
+                handle->bus_config.static_high_mask |= (uint32_t)1 << line;
             }
-        } else if (!get_rw_pin(json, tokens, current_token_idx, handle)) {
-            get_vpp_pin(json, tokens, current_token_idx, handle);
+        } else {
+            bool rw = jsoneq(json, key_token, "rw-pin") == 0;
+            if (rw || jsoneq(json, key_token, "vpp-pin") == 0) {
+                uint8_t line = json_bus_line(json, value_token);
+                if (line >= JSON_BUS_LINES) return -1;
+                if (rw) {
+                    handle->bus_config.rw_line = line;
+                } else {
+                    handle->bus_config.vpp_line = line;
+                }
+            }
         }
         // An unknown key skips its whole value.
         current_token_idx = next_idx;
@@ -591,14 +628,6 @@ bool get_flags(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_
         return 1;
     }
     return 0;
-}
-
-bool get_rw_pin(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle) {
-    extract_int("rw-pin", handle->bus_config.rw_line);
-}
-
-bool get_vpp_pin(const char* json, jsmntok_t* tokens, int pos, firestarter_handle_t* handle) {
-    extract_int("vpp-pin", handle->bus_config.vpp_line);
 }
 
 bool get_r1(const char* json, jsmntok_t* tokens, int pos, rurp_configuration_t* config) {
