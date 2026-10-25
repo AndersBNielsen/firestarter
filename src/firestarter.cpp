@@ -98,8 +98,11 @@ bool parse_json(firestarter_handle_t* handle) {
 #endif
         }
     } else if (handle->cmd == CMD_CONFIG) {
-        rurp_configuration_t* config = rurp_get_config();
-        int res = json_parse_config(handle->data_buffer, tokens, token_count, config, handle);
+        // Parse into a copy. The live configuration changes only after every
+        // field has parsed, any calibration has back-solved and the result
+        // is valid, so a refused command leaves nothing behind in RAM.
+        rurp_configuration_t config = *rurp_get_config();
+        int res = json_parse_config(handle->data_buffer, tokens, token_count, &config, handle);
         if (res < 0) {
             LOG_ERROR_ID(MSG_ERR_PARSE_CFG);
             return false;
@@ -124,15 +127,18 @@ bool parse_json(firestarter_handle_t* handle) {
                 LOG_ERROR_ID(MSG_ERR_PARSE_CFG);
                 return false;
             }
-            config->bandgap_mv = measured;
+            config.bandgap_mv = measured;
             res |= JSON_CFG_FIELD_CHANGED;
         }
         if (res & JSON_CFG_FIELD_CHANGED) {
-            // Range-check whatever was just written before it is stored, so a
-            // bad r1/r2/bandgap never reaches the conversion. Refuses by
-            // correcting to the default, which is the same policy boot applies.
-            (void)rurp_config_migrate(config);
-            rurp_save_config(config);
+            // Refused, never corrected: a corrected value would be acked as
+            // if the operator's value had been stored. Boot-time migration
+            // still corrects, because no operator is there to tell.
+            if (!rurp_config_commit(rurp_get_config(), &config)) {
+                LOG_ERROR_ID(MSG_ERR_PARSE_CFG);
+                return false;
+            }
+            rurp_save_config(rurp_get_config());
         }
     }
     return true;

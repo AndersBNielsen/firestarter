@@ -560,9 +560,9 @@ bool get_vcc(const char* json, jsmntok_t* tokens, int pos, rurp_configuration_t*
 
 /*
  * Write the stored bandgap directly. This is the escape hatch -- restoring the
- * nominal, or re-applying a calibration recorded elsewhere. The value is still
- * range-checked by rurp_config_migrate before it is ever used, so a bad one
- * cannot reach the conversion.
+ * nominal, or re-applying a calibration recorded elsewhere. The config command
+ * refuses an out-of-band value before it is stored, so a bad one cannot reach
+ * the conversion.
  */
 bool get_bg(const char* json, jsmntok_t* tokens, int pos, rurp_configuration_t* config) {
     extract_int("bg", config->bandgap_mv);

@@ -49,6 +49,20 @@ static bool is_config_version(const char* version) {
            is_digit(version[3]) && is_digit(version[4]) && version[5] == '\0';
 }
 
+bool rurp_config_is_valid(const rurp_configuration_t* config) {
+    return r1_in_band(config->r1) && r2_in_band(config->r2) &&
+           bandgap_in_band(config->bandgap_mv) &&
+           hardware_revision_known(config->hardware_revision);
+}
+
+bool rurp_config_commit(rurp_configuration_t* live, const rurp_configuration_t* candidate) {
+    if (!rurp_config_is_valid(candidate)) {
+        return false;
+    }
+    *live = *candidate;
+    return true;
+}
+
 bool rurp_config_migrate(rurp_configuration_t* config) {
     if (!is_config_version(config->version)) {
         // Nothing in a foreign record is trusted, the shield override least

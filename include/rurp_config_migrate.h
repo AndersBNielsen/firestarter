@@ -30,6 +30,16 @@ extern "C" {
  * also resets to 0xFF. Returns true when any field changed. */
 bool rurp_config_migrate(rurp_configuration_t* config);
 
+/* True when every stored value is one the firmware may use: r1, r2 and
+ * bandgap_mv inside their bands, and hardware_revision 0xFF or a known
+ * revision. The version string is not examined. */
+bool rurp_config_is_valid(const rurp_configuration_t* config);
+
+/* Copy `candidate` over `live` only when rurp_config_is_valid(candidate).
+ * A refused candidate leaves `live` unchanged. Returns true when copied.
+ * The caller saves; this function does not touch storage. */
+bool rurp_config_commit(rurp_configuration_t* live, const rurp_configuration_t* candidate);
+
 #ifdef __cplusplus
 }
 #endif
