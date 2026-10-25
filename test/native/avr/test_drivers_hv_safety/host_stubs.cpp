@@ -17,6 +17,8 @@ extern "C" {
 /* This suite supplies its own VPP reading and hardware revision. */
 #define HOST_STUBS_CUSTOM_VOLTAGE_MV
 #define HOST_STUBS_CUSTOM_HW_REVISION
+/* Record every register write, so a test can show the bus was not touched. */
+#define HOST_STUBS_RECORD_BUS
 
 #include "../_shared/host_stubs_common.inc"
 

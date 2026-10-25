@@ -116,15 +116,16 @@ the code:
    `configure_eprom()`. The UV-EPROM family.
 6. `PROTO_SRAM_32PIN` (`0x0E`), `PROTO_SRAM_24PIN` (`0x27`), `PROTO_SRAM_28PIN` (`0x28`) and
    `PROTO_SRAM_32PIN_NVRAM` (`0x29`) → `configure_sram()`. This arm never enables the VPP regulator.
-7. `0x11`, `0x2A`, `0x2B` and `0x2C` → `configure_not_implemented()`. These are FWH (`0x11`) and
-   GAL/PLD (`0x2A`, `0x2B`, `0x2C`). RURP hardware cannot drive them. They have no `PROTO_` token,
-   so the code uses raw hex.
-8. All other values → `configure_not_implemented()`. This is one unconditional call at the end of
-   the function. It catches `protocol == 0`, `PROTO_EEPROM_8051BUS` (`0x34`) and each unknown value.
-   It returns `MSG_ERR_PROTOCOL_NOT_IMPLEMENTED` (`0xBB`) and changes no hardware state.
+7. All other values → `configure_not_implemented()`. This catches FWH (`0x11`) and GAL/PLD (`0x2A`,
+   `0x2B`, `0x2C`), which RURP hardware cannot drive, `protocol == 0`, `PROTO_EEPROM_8051BUS`
+   (`0x34`) and each unknown value. It returns `MSG_ERR_PROTOCOL_NOT_IMPLEMENTED` (`0xBB`) and
+   changes no hardware state.
 
-**Fail-closed rule.** Steps 7 and 8 send each named-infeasible, unknown or zero value to
-`configure_not_implemented()`. No other dispatch path exists for them.
+`configure_memory` selects the handler before it touches the bus. It writes address 0 to the
+address registers only for a protocol that steps 1 to 6 accept, and then calls the handler.
+
+**Fail-closed rule.** Step 7 sends each named-infeasible, unknown or zero value to
+`configure_not_implemented()`, before any register write. No other dispatch path exists for them.
 
 ### Algorithm Handlers
 

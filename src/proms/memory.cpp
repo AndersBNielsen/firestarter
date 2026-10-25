@@ -81,52 +81,32 @@ void configure_memory(firestarter_handle_t* handle) {
     handle->firestarter_set_control_register = memory_set_control_register;
     handle->firestarter_get_control_register = memory_get_control_register;
 
-    mem_util_set_address(handle, 0);
-
+    // Pick the handler first. A protocol that reaches no handler is refused
+    // before the bus is touched. FWH and GAL/PLD (0x11, 0x2A-0x2C) are
+    // infeasible on RURP; every other unrecognised value, including 0, takes
+    // the same refusal. Dispatch trusts only handle->protocol.
+    void (*configure)(firestarter_handle_t*) = NULL;
     if (handle->protocol == PROTO_FLASH_INTEL) {
-        configure_flash_intel(handle);
-        return;
+        configure = configure_flash_intel;
+    } else if (handle->protocol == PROTO_EEPROM_PARALLEL) {
+        configure = configure_eeprom28c;
+    } else if (handle->protocol == PROTO_FLASH_NOR_UNLOCK) {
+        configure = configure_flash_nor_unlock;
+    } else if (handle->protocol == PROTO_FLASH_5V_PAGE || handle->protocol == PROTO_PHANTOM_0x35 || handle->protocol == PROTO_PHANTOM_0x39) {
+        configure = configure_flash_5v_page;
+    } else if (handle->protocol == PROTO_EPROM_28PIN || handle->protocol == PROTO_EPROM_32PIN || handle->protocol == PROTO_EPROM_24PIN) {
+        configure = configure_eprom;
+    } else if (handle->protocol == PROTO_SRAM_32PIN || handle->protocol == PROTO_SRAM_24PIN ||
+               handle->protocol == PROTO_SRAM_28PIN || handle->protocol == PROTO_SRAM_32PIN_NVRAM) {
+        configure = configure_sram;
     }
-
-    if (handle->protocol == PROTO_EEPROM_PARALLEL) {
-        configure_eeprom28c(handle);
-        return;
-    }
-
-    if (handle->protocol == PROTO_FLASH_NOR_UNLOCK) {
-        configure_flash_nor_unlock(handle);
-        return;
-    }
-
-    if (handle->protocol == PROTO_FLASH_5V_PAGE || handle->protocol == PROTO_PHANTOM_0x35 || handle->protocol == PROTO_PHANTOM_0x39) {
-        configure_flash_5v_page(handle);
-        return;
-    }
-
-    if (handle->protocol == PROTO_EPROM_28PIN || handle->protocol == PROTO_EPROM_32PIN || handle->protocol == PROTO_EPROM_24PIN) {
-        configure_eprom(handle);
-        return;
-    }
-
-    if (handle->protocol == PROTO_SRAM_32PIN || handle->protocol == PROTO_SRAM_24PIN ||
-        handle->protocol == PROTO_SRAM_28PIN || handle->protocol == PROTO_SRAM_32PIN_NVRAM) {
-        configure_sram(handle);
-        return;
-    }
-
-    // Named infeasibility arms: FWH and GAL/PLD — infeasible on RURP,
-    // and explicitly recognized as such rather than falling through.
-    if (handle->protocol == 0x11 || handle->protocol == 0x2A ||
-        handle->protocol == 0x2B || handle->protocol == 0x2C) {
+    if (configure == NULL) {
         configure_not_implemented(handle);
         return;
     }
 
-    // Generic fail-closed guard: every remaining protocol value — including
-    // protocol == 0 — is unrecognized and reaches not-implemented. Trusts
-    // only handle->protocol end to end; no backward-compat fallback axis
-    // remains -- dispatch is protocol-only.
-    configure_not_implemented(handle);
+    mem_util_set_address(handle, 0);
+    configure(handle);
 }
 
 void memory_set_control_register(firestarter_handle_t* handle, rurp_register_t bit, bool state) {

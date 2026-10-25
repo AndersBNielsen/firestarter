@@ -9,6 +9,8 @@
  *   - The EPROM write body refuses a protocol with no parameter row before
  *     it asserts any route.
  *   - The AT28C chip-ID read measures the regulator before it raises A9.
+ *   - configure_memory refuses a protocol with no handler before it writes
+ *     to any register.
  */
 
 #include <Arduino.h>
@@ -28,6 +30,8 @@ using namespace fakeit;
 
 extern "C" void set_mock_vpp_mv(uint16_t mv);
 extern "C" void set_mock_hw_rev(uint8_t rev);
+extern "C" void clear_bus_recording();
+extern "C" int bus_recording_count();
 
 /* Control-register recorder. */
 #define MAX_CTRL_WRITES 64
@@ -193,6 +197,27 @@ void test_28c_chip_id_rev0_skips_measurement(void) {
 }
 #endif
 
+/* ---- configure_memory dispatch ---- */
+
+void test_unknown_protocol_is_refused_before_the_bus(void) {
+    const uint32_t protocols[] = {0x00, 0x11, 0x2A, 0x2B, 0x2C, 0x34, 0x99};
+    for (unsigned i = 0; i < sizeof(protocols) / sizeof(protocols[0]); i++) {
+        clear_bus_recording();
+        firestarter_handle_t h = make_handle(protocols[i], CMD_WRITE, 12500, 0);
+        configure_memory(&h);
+        TEST_ASSERT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);
+        TEST_ASSERT_EQUAL_INT(0, bus_recording_count());
+    }
+}
+
+void test_known_protocol_sets_the_address_bus(void) {
+    clear_bus_recording();
+    firestarter_handle_t h = make_handle(0x07, CMD_WRITE, 12500, 0);
+    configure_memory(&h);
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_OK, h.response_code);
+    TEST_ASSERT_GREATER_THAN_INT(0, bus_recording_count());
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_eprom_pulse_above_max_refused_on_every_row);
@@ -205,5 +230,7 @@ int main(int, char**) {
 #ifdef HARDWARE_REVISION
     RUN_TEST(test_28c_chip_id_rev0_skips_measurement);
 #endif
+    RUN_TEST(test_unknown_protocol_is_refused_before_the_bus);
+    RUN_TEST(test_known_protocol_sets_the_address_bus);
     return UNITY_END();
 }
