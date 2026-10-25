@@ -123,11 +123,11 @@ static void test_divider_sum_guard_boundary(void) {
 static void test_scale_factor_guard_boundary(void) {
     // k exactly at the bound evaluates; one over refuses. Both pairs pass the
     // divider-sum guard first, so this isolates the second guard -- which is
-    // only reachable at all when r2 is under about 1023, since otherwise
+    // only reachable at all when r2 is under about 938, since otherwise
     // RURP_DIVIDER_SUM_MAX caps the sum before k can grow.
-    const uint32_t r2 = 1000;
-    const uint32_t r1_at = 3812003;   // r1 + r2 = 3813003 -> k == 4194303
-    const uint32_t r1_over = 3812004; // r1 + r2 = 3813004 -> k == 4194304
+    const uint32_t r2 = 900;
+    const uint32_t r1_at = 3430803;   // r1 + r2 = 3431703 -> k == 4194303
+    const uint32_t r1_over = 3430804; // r1 + r2 = 3431704 -> k == 4194304
 
     TEST_ASSERT_TRUE(r1_at + r2 <= RURP_DIVIDER_SUM_MAX);
     TEST_ASSERT_TRUE(r1_over + r2 <= RURP_DIVIDER_SUM_MAX);

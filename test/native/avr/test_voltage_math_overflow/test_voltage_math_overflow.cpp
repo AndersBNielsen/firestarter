@@ -21,11 +21,18 @@ void setUp(void) {
 void tearDown(void) {
 }
 
-static void test_max_bandgap_with_a_huge_divider_sum_is_refused(void) {
+static void test_the_divider_sum_bound_fits_at_the_max_bandgap(void) {
+    // RURP_DIVIDER_SUM_MAX is sized so bandgap_mv * sum cannot wrap a uint32
+    // at the largest allowed bandgap. One more and it would.
+    TEST_ASSERT_TRUE((uint64_t)RURP_BANDGAP_MAX_MV * RURP_DIVIDER_SUM_MAX <= 0xFFFFFFFFULL);
+    TEST_ASSERT_TRUE((uint64_t)RURP_BANDGAP_MAX_MV * (RURP_DIVIDER_SUM_MAX + 1) > 0xFFFFFFFFULL);
+}
+
+static void test_max_bandgap_with_a_sum_above_the_bound_is_refused(void) {
     // 1200 mV * 3.9 M = 4.68e9, which wraps a uint32. It must be refused,
     // not evaluated on a wrapped product.
     const uint32_t r2 = 44000;
-    const uint32_t r1 = RURP_DIVIDER_SUM_MAX - r2;
+    const uint32_t r1 = 3900000UL - r2;
     TEST_ASSERT_EQUAL_UINT8(0, rurp_calibration_is_plausible(r1, r2, RURP_BANDGAP_MAX_MV));
     TEST_ASSERT_EQUAL_UINT16(0, rurp_scale_voltage_mv(512, 225, r1, r2, RURP_BANDGAP_MAX_MV));
 }
@@ -38,8 +45,8 @@ static void test_max_bandgap_boundary_of_the_sum(void) {
     TEST_ASSERT_EQUAL_UINT8(0, rurp_calibration_is_plausible(sum_ok + 1 - r2, r2, RURP_BANDGAP_MAX_MV));
 }
 
-static void test_nominal_bandgap_still_accepts_the_sum_bound(void) {
-    // The refusal above must not tighten the nominal-bandgap behaviour.
+static void test_nominal_bandgap_accepts_the_sum_bound(void) {
+    // The bound does not depend on the bandgap: the nominal one accepts it too.
     const uint32_t r2 = 44000;
     TEST_ASSERT_EQUAL_UINT8(1, rurp_calibration_is_plausible(RURP_DIVIDER_SUM_MAX - r2, r2,
                                                               RURP_BANDGAP_NOMINAL_MV));
@@ -67,6 +74,9 @@ static void test_back_solve_refuses_a_product_that_wraps_uint32(void) {
     TEST_ASSERT_EQUAL_UINT16(0, rurp_bandgap_from_measured_vcc(0xFFFFFFFFUL, 1023, 1024));
     TEST_ASSERT_EQUAL_UINT16(0, rurp_bandgap_from_measured_vcc(4200000UL, 1023, 1024));
     TEST_ASSERT_EQUAL_UINT16(0, rurp_bandgap_from_measured_vcc(5000, 0xFFFFFFFFUL, 1024));
+    // A count above full scale is refused; full scale itself still evaluates.
+    TEST_ASSERT_EQUAL_UINT16(0, rurp_bandgap_from_measured_vcc(1100, 1025, 1024));
+    TEST_ASSERT_EQUAL_UINT16(1100, rurp_bandgap_from_measured_vcc(1100, 1024, 1024));
 }
 
 static void test_back_solve_still_accepts_a_normal_reading(void) {
@@ -75,9 +85,10 @@ static void test_back_solve_still_accepts_a_normal_reading(void) {
 
 int main(int, char**) {
     UNITY_BEGIN();
-    RUN_TEST(test_max_bandgap_with_a_huge_divider_sum_is_refused);
+    RUN_TEST(test_the_divider_sum_bound_fits_at_the_max_bandgap);
+    RUN_TEST(test_max_bandgap_with_a_sum_above_the_bound_is_refused);
     RUN_TEST(test_max_bandgap_boundary_of_the_sum);
-    RUN_TEST(test_nominal_bandgap_still_accepts_the_sum_bound);
+    RUN_TEST(test_nominal_bandgap_accepts_the_sum_bound);
     RUN_TEST(test_sum_wraparound_is_refused);
     RUN_TEST(test_scale_factor_bound_follows_the_adc_width);
     RUN_TEST(test_scale_voltage_saturates_instead_of_wrapping);

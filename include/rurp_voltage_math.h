@@ -82,14 +82,15 @@ extern "C" {
 
 /*
  * Guards that keep both products inside uint32 in rurp_scale_voltage_mv:
- * bandgap_mv * (r1 + r2) needs r1 + r2 <= 3904515 at the nominal bandgap, and
- * adc * k needs k <= UINT32_MAX / RURP_ADC_FULL_SCALE. RURP_DIVIDER_SUM_MAX
- * sits just below the first limit at the nominal bandgap;
- * rurp_calibration_is_plausible() also tests the product itself, which at the
- * largest allowed bandgap (RURP_BANDGAP_MAX_MV) lowers the limit to 3579139.
- * RURP_SCALE_K_MAX follows the ADC width: 4194303 for 10 bits, 1048575 for 12.
+ * bandgap_mv * (r1 + r2) must fit at the largest allowed bandgap
+ * (RURP_BANDGAP_MAX_MV), so RURP_DIVIDER_SUM_MAX is UINT32_MAX divided by it
+ * (3579139). The stored r1 + r2 band tops out near 392500, far below. A
+ * compile-time bound costs no flash, where a runtime product test pulls in
+ * avr-gcc's 64-bit multiply helpers. adc * k needs
+ * k <= UINT32_MAX / RURP_ADC_FULL_SCALE, so RURP_SCALE_K_MAX follows the ADC
+ * width: 4194303 for 10 bits, 1048575 for 12.
  */
-#define RURP_DIVIDER_SUM_MAX 3900000UL
+#define RURP_DIVIDER_SUM_MAX (0xFFFFFFFFUL / RURP_BANDGAP_MAX_MV)
 #define RURP_SCALE_K_MAX (0xFFFFFFFFUL / RURP_ADC_FULL_SCALE)
 
 /*
@@ -139,8 +140,10 @@ uint8_t rurp_calibration_is_plausible(uint32_t r1, uint32_t r2, uint32_t bandgap
  *
  *   Vbg = VCC_meter * bandgap_adc / adc_full_scale
  *
- * Returns 0 when the result is outside RURP_BANDGAP_MIN_MV..MAX_MV, or when
- * VCC_meter * bandgap_adc would overflow uint32 -- a refusal, never a clamp.
+ * Returns 0 when the result is outside RURP_BANDGAP_MIN_MV..MAX_MV, when
+ * VCC_meter is above 65535 mV, or when bandgap_adc is above adc_full_scale --
+ * a refusal, never a clamp. The two input bounds keep the product inside
+ * uint32.
  * A stored bandgap is a value the firmware TRUSTS to
  * judge programming voltages, so an implausible one must not be written.
  */

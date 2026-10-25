@@ -7,8 +7,6 @@
 
 #include "rurp_voltage_math.h"
 
-#define UINT32_LIMIT 0xFFFFFFFFUL
-
 /* Narrow a 32-bit result to 16 bits. An over-range value saturates, so it still
  * reads as a high rail and cannot wrap into a small, plausible-looking number. */
 static uint16_t saturate_u16(uint32_t v) {
@@ -25,10 +23,6 @@ uint8_t rurp_calibration_is_plausible(uint32_t r1, uint32_t r2, uint32_t bandgap
     }
     sum = r1 + r2;
     if (sum < r1 || sum > RURP_DIVIDER_SUM_MAX) {
-        return 0;
-    }
-    /* bandgap_mv * sum must fit in uint32: test it by division, not by multiplying. */
-    if (sum > UINT32_LIMIT / bandgap_mv) {
         return 0;
     }
     if ((bandgap_mv * sum) / r2 > RURP_SCALE_K_MAX) {
@@ -67,8 +61,10 @@ uint16_t rurp_bandgap_from_measured_vcc(uint32_t vcc_meter_mv, uint32_t bandgap_
      * Vbg = VCC_meter * bandgap_adc / adc_full_scale. One meter reading on the supply
      * pin is the whole measurement -- no pot and no high voltage.
      */
-    if (vcc_meter_mv > (UINT32_LIMIT - adc_full_scale / 2) / bandgap_adc) {
-        return 0;  /* the product would not fit in uint32: refuse */
+    /* An ADC count cannot exceed full scale, and no supply reads above
+     * 65535 mV. Within both bounds the product below fits in uint32. */
+    if (vcc_meter_mv > 0xFFFFUL || bandgap_adc > adc_full_scale) {
+        return 0;
     }
     bg = (vcc_meter_mv * bandgap_adc + adc_full_scale / 2) / adc_full_scale;
     if (bg < RURP_BANDGAP_MIN_MV || bg > RURP_BANDGAP_MAX_MV) {
