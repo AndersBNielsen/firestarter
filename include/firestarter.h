@@ -32,8 +32,8 @@
 #define DEV_TOOLS 0
 #endif
 
-/* CMD_FRAME_MAX: largest legitimate JSON command frame payload (bytes).
- * Worst-case JSON command is ~422 B; 512 B gives headroom.
+/* CMD_FRAME_MAX: largest frame payload the transport accepts (bytes).
+ * A binary command frame is at most CF_HEADER_SIZE + CF_MEMORY_SIZE (65 B).
  * Equals DATA_BUFFER_SIZE — the decoder's internal overflow cap.
  * Mirrors constants.py CMD_FRAME_MAX per CLAUDE.md parity. */
 #define CMD_FRAME_MAX DATA_BUFFER_SIZE
@@ -121,7 +121,7 @@
 //    consumer of this predicate outside this header is
 //    test/native/avr/test_cmd_admission/test_cmd_admission.cpp's truth table.
 //  - static inline, IN THIS HEADER. [env:native]'s build_src_filter compiles
-//    only src/proms/, rurp_serial_utils.cpp and json_parser.c, so a definition
+//    only src/proms/, rurp_serial_utils.cpp and command_decoder.c, so a definition
 //    elsewhere would not link into the native test binary.
 //  - MUST NOT name CMD_DEV_ADDRESS or CMD_DEV_REGISTER -- they do not exist in
 //    a no-DEV_TOOLS build, and naming them recreates the divergence this
@@ -201,7 +201,7 @@ typedef struct firestarter_handle {
                                    * 0xFFFF needs this field widened. */
     uint16_t chip_id;
     uint16_t page_size;          /* per-chip page-write size delivered by the host over the wire;
-                                   * 0 = absent. Reset per command in json_parse,
+                                   * 0 = absent. Written by every memory command frame,
                                    * exactly like chip_id above. */
     uint32_t region_end;         /* absolute, EXCLUSIVE end address of the operation's region,
                                    * delivered by the host over the wire; 0 = absent. Unlike
@@ -210,7 +210,7 @@ typedef struct firestarter_handle {
                                    * write, so refusing on absence is the safe direction, while
                                    * this field guards a relaxation of an existing check, so
                                    * falling back to the stricter whole-device behaviour is the
-                                   * safe direction instead. Reset per command in json_parse,
+                                   * safe direction instead. Written by every memory command frame,
                                    * exactly like page_size above. */
     char data_buffer[DATA_BUFFER_SIZE];
     uint32_t data_size;

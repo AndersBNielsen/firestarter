@@ -15,6 +15,7 @@
 #include "memory_utils.h"
 #include "operation_utils.h"
 #include "rurp_pinout.h"
+#include "rurp_platform_compat.h"
 
 /* Conservative page-size floor, used when the host delivers no page_size.
  * Do NOT replace it with a density-derived band table: AT28MC010 and AT28C010
@@ -81,7 +82,7 @@ static bool eeprom28c_wait_for_page_write(firestarter_handle_t* handle, uint32_t
 static bool eeprom28c_verify_page_readback(firestarter_handle_t* handle, uint32_t first_index, uint32_t last_index);
 // The shared SDP timed-emit helper and the two standalone, payload-free
 // lock/unlock operations it drives.
-static void eeprom28c_emit_sdp_sequence_timed(firestarter_handle_t* handle, const byte_flip_t* sequence, size_t length,
+static void eeprom28c_emit_sdp_sequence_timed(firestarter_handle_t* handle, const byte_flip_t* sequence_P, size_t length,
                                                uint8_t emitted_msg_id, uint8_t done_us_msg_id);
 static void eeprom28c_sdp_unlock_execute(firestarter_handle_t* handle);
 static void eeprom28c_sdp_lock_execute(firestarter_handle_t* handle);
@@ -97,7 +98,7 @@ static void eeprom28c_erase_execute(firestarter_handle_t* handle);
 // INTERNAL linkage unless a prior extern declaration is visible, and the guard
 // must read this production array rather than a test-local copy.
 extern const byte_flip_t EEPROM_SDP_DISABLE[6];
-const byte_flip_t EEPROM_SDP_DISABLE[6] = {
+const byte_flip_t EEPROM_SDP_DISABLE[6] PROGMEM = {
     {0x5555, 0xAA},
     {0x2AAA, 0x55},
     {0x5555, 0x80},
@@ -123,7 +124,7 @@ const byte_flip_t EEPROM_SDP_DISABLE[6] = {
 //
 // The `extern` below is load-bearing for the same linkage reason as above.
 extern const byte_flip_t EEPROM_SDP_ENABLE[3];
-const byte_flip_t EEPROM_SDP_ENABLE[3] = {
+const byte_flip_t EEPROM_SDP_ENABLE[3] PROGMEM = {
     {0x5555, 0xAA},
     {0x2AAA, 0x55},
     {0x5555, 0xA0},
@@ -251,8 +252,15 @@ static void eeprom28c_wait_for_sdp_completion(firestarter_handle_t* handle) {
 // LOG_ calls belong here BY DESIGN. Do not add this function as a scanned
 // window in check_no_log_in_sdp_window.py -- the real timing window is
 // eeprom28c_emit_command_sequence's body.
-static void eeprom28c_emit_sdp_sequence_timed(firestarter_handle_t* handle, const byte_flip_t* sequence, size_t length,
+static void eeprom28c_emit_sdp_sequence_timed(firestarter_handle_t* handle, const byte_flip_t* sequence_P, size_t length,
                                                uint8_t emitted_msg_id, uint8_t done_us_msg_id) {
+    // The tables are in PROGMEM. Copy to the stack BEFORE the micros()
+    // bracket, so the timed window and the inter-byte timing do not change.
+    byte_flip_t sequence[FLASH_COMMAND_MAX_LEN];
+    if (length > FLASH_COMMAND_MAX_LEN) {
+        return;
+    }
+    memcpy_P(sequence, sequence_P, length * sizeof(byte_flip_t));
     LOG_ID(emitted_msg_id);
     uint32_t sdp_emit_start_us = micros();
     eeprom28c_emit_command_sequence(handle, sequence, length);
