@@ -1065,12 +1065,65 @@ void test_5v_page_wait_times_out_with_the_last_byte_in_the_report(void) {
     TEST_ASSERT_EQUAL_HEX8(0x80, s_wire_bytes[11]);
 }
 
+/* Issue #62: a software chip erase for the 0x05 family. */
+void test_5v_page_erase_dispatch(void) {
+    firestarter_handle_t h = make_handle(0x05, CMD_ERASE);
+    configure_memory(&h);
+    TEST_ASSERT_NOT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);
+    TEST_ASSERT_NOT_NULL_MESSAGE((const void*)h.firestarter_operation_main,
+        "0x05 must accept CMD_ERASE");
+    TEST_ASSERT_NOT_NULL_MESSAGE((const void*)h.firestarter_operation_init,
+        "the erase checks the chip ID first when the host sends one");
+}
+
+void test_5v_page_erase_sends_the_six_cycle_sequence_and_waits(void) {
+    firestarter_handle_t h = make_handle(0x05, CMD_ERASE);
+    configure_memory(&h);
+    h.firestarter_get_data = stub_part;
+    s_part_answer = 0xFF;
+    s_part_reads = 0;
+    clear_bus_recording();
+
+    h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_OK, h.response_code);
+    const uint8_t want[6][2] = {
+        {0x55, 0x55}, {0xAA, 0x2A}, {0x55, 0x55}, {0x55, 0x55}, {0xAA, 0x2A}, {0x55, 0x55},
+    };
+    int cycle = 0;
+    for (int i = 0; i + 1 < bus_recording_count() && cycle < 6; i++) {
+        if (recorded_reg(i) == LEAST_SIGNIFICANT_BYTE && recorded_reg(i + 1) == MOST_SIGNIFICANT_BYTE) {
+            TEST_ASSERT_EQUAL_HEX8(want[cycle][0], recorded_data(i));
+            TEST_ASSERT_EQUAL_HEX8(want[cycle][1], recorded_data(i + 1));
+            cycle++;
+        }
+    }
+    TEST_ASSERT_EQUAL_MESSAGE(6, cycle, "six command cycles at 5555/2AAA");
+    TEST_ASSERT_EQUAL_MESSAGE(3, s_part_reads, "two DQ7 reads, then the erased-byte check");
+    assert_no_vpp_in_recording("the 0x05 chip erase is a 5 V operation");
+}
+
+void test_5v_page_erase_that_leaves_address_zero_is_not_blank(void) {
+    firestarter_handle_t h = make_handle(0x05, CMD_ERASE);
+    configure_memory(&h);
+    h.firestarter_get_data = stub_part;
+    s_part_answer = 0xC3; /* DQ7 high, so the wait ends: a locked boot block */
+
+    h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);
+    TEST_ASSERT_EQUAL_HEX8(MSG_ERR_NOT_BLANK, s_wire_bytes[6]);
+}
+
 int main(int argc, char** argv) {
     (void)argc; (void)argv;
     UNITY_BEGIN();
 
     RUN_TEST(test_5v_page_wait_ends_on_dq7_not_the_whole_byte);
     RUN_TEST(test_5v_page_wait_times_out_with_the_last_byte_in_the_report);
+    RUN_TEST(test_5v_page_erase_dispatch);
+    RUN_TEST(test_5v_page_erase_sends_the_six_cycle_sequence_and_waits);
+    RUN_TEST(test_5v_page_erase_that_leaves_address_zero_is_not_blank);
 
     /* Protocol 0x05 configure-phase VPP-safety proof */
     RUN_TEST(test_5v_page_0x05_read_configure_no_vpp);

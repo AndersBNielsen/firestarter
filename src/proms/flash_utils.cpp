@@ -116,3 +116,9 @@ void flash_util_check_chip_id_execute(firestarter_handle_t* handle) {
     uint16_t chip_id = flash_util_get_chip_id(handle);
     mem_util_report_chip_id(handle, chip_id, is_flag_set(FLAG_FORCE));
 }
+
+void flash_util_check_chip_id_init(firestarter_handle_t* handle) {
+    if (handle->chip_id > 0) {
+        flash_util_check_chip_id_execute(handle);
+    }
+}

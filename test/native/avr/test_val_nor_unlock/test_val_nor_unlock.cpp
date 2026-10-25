@@ -178,7 +178,7 @@ void test_nor_unlock_erase_configure_no_vpp(void) {
 
 /* Leg 1 (Dispatch): CMD_LOCK_STATUS must wire firestarter_operation_main to
  * flash_nor_unlock_read_protection_execute and null firestarter_operation_init
- * -- this file assigns flash_nor_unlock_generic_init before the switch, so
+ * -- this file assigns flash_util_check_chip_id_init before the switch, so
  * the CMD_LOCK_STATUS arm has to null it explicitly (unlike flash_5v_page,
  * which never assigns one). */
 void test_nor_unlock_lock_status_dispatch(void) {

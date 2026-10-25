@@ -22,11 +22,9 @@ void flash_nor_unlock_check_chip_id_execute(firestarter_handle_t* handle);
 
 uint16_t flash_nor_unlock_get_chip_id(firestarter_handle_t* handle);
 
-void flash_nor_unlock_generic_init(firestarter_handle_t* handle);
-
 void configure_flash_nor_unlock(firestarter_handle_t* handle) {
     LOG_DEBUG_ID_SUB(DBG_CONFIGURING_FLASH);
-    handle->firestarter_operation_init = flash_nor_unlock_generic_init;
+    handle->firestarter_operation_init = flash_util_check_chip_id_init;
     switch (handle->cmd) {
     case CMD_WRITE:
         handle->firestarter_operation_init = flash_nor_unlock_write_init;
@@ -40,7 +38,7 @@ void configure_flash_nor_unlock(firestarter_handle_t* handle) {
         handle->firestarter_operation_main = flash_nor_unlock_check_chip_id_execute;
         break;
     // A second query arm, modelled on CMD_CHECK_CHIP_ID
-    // just above. This file assigns flash_nor_unlock_generic_init before the
+    // just above. This file assigns flash_util_check_chip_id_init before the
     // switch (see top of this function), so this arm must null it -- a
     // status read has no chip-ID precondition to run. The 0x01 force ctrl
     // flag is deliberately not read on this path: elsewhere in this file's
@@ -52,12 +50,6 @@ void configure_flash_nor_unlock(firestarter_handle_t* handle) {
         handle->firestarter_operation_init = NULL;
         handle->firestarter_operation_main = flash_nor_unlock_read_protection_execute;
         break;
-    }
-}
-
-void flash_nor_unlock_generic_init(firestarter_handle_t* handle) {
-    if (handle->chip_id > 0) {
-        flash_nor_unlock_check_chip_id_execute(handle);
     }
 }
 

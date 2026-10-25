@@ -152,6 +152,8 @@ extern "C" {
      * flash_nor_unlock.cpp or flash_5v_page.cpp. */
     uint16_t flash_util_get_chip_id(firestarter_handle_t* handle);
     void flash_util_check_chip_id_execute(firestarter_handle_t* handle);
+    /* Operation init: the chip-ID check, when the host sent a chip ID. */
+    void flash_util_check_chip_id_init(firestarter_handle_t* handle);
     uint8_t flash_util_read_in_id_mode(firestarter_handle_t* handle, uint32_t address);
 
 #ifdef __cplusplus
