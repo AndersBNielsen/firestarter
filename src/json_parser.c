@@ -116,14 +116,11 @@ const char key_algorithm[] PROGMEM = "algorithm";
 const char key_read_settling[] PROGMEM = "read-settling-delay";
 const char key_read_strobe[]   PROGMEM = "read-strobe-us";
 /* Per-chip page-write size delivered by the host.
- * Wire key is the HYPHEN form "page-size" -- the internal database key
- * programming.page_size uses an underscore, so a PROGMEM string written
- * against the underscore form would silently never match. */
+ * Wire key is the hyphen form "page-size"; the database key uses an
+ * underscore, so a string written in the underscore form never matches. */
 const char key_page_size[]     PROGMEM = "page-size";
 /* Absolute, exclusive end address of the operation's region.
- * Wire key is the HYPHEN form "region-end" -- a PROGMEM string written
- * against an underscore form would silently never match, exactly like
- * key_page_size's warning above. */
+ * Wire key is the hyphen form "region-end". */
 const char key_region_end[]    PROGMEM = "region-end";
 
 /*
@@ -131,10 +128,8 @@ const char key_region_end[]    PROGMEM = "region-end";
  *
  * 6 B on AVR because avr-gcc gives every type 1-byte struct alignment;
  * larger and padded on a 64-bit host, where PGM_P is an 8-byte pointer and
- * the compiler inserts alignment padding after the narrower columns. NO
- * ASSERTION ON sizeof(field_desc_t) MAY BE AUTHORED WITHOUT A TARGET GUARD
- * for that reason -- see include/eprom_params.h:52-67's own written warning
- * about exactly this trap (PATTERNS §4).
+ * the compiler inserts alignment padding after the narrower columns. Any
+ * assertion on sizeof(field_desc_t) needs a target guard for that reason.
  *
  * clamp == 0 means "no clamp".
  */
@@ -149,7 +144,7 @@ typedef struct {
  * width's low nibble (FIELD_WIDTH_MASK) is the byte width derived from the
  * member. Bit 7 (FIELD_POLICY_MASK), when set, selects MASK semantics for
  * an out-of-range value instead of SATURATE. Bit 6 (FIELD_POLICY_REJECT_NEGATIVE),
- * when set, refuses the whole frame -- see that macro's own comment below.
+ * when set, refuses the whole frame -- see that macro's comment below.
  */
 #define FIELD_WIDTH_MASK  0x0F
 #define FIELD_POLICY_MASK 0x80
@@ -281,7 +276,7 @@ static void store_field(firestarter_handle_t* handle, const field_desc_t* field,
     uint8_t width_raw = pgm_read_byte(&field->width);
     uint16_t clamp = pgm_read_word(&field->clamp);
 
-    /* 1. The read-timing bound now lives here, as the clamp column. */
+    /* 1. The read-timing bound lives here, as the clamp column. */
     if (clamp != 0 && value > (uint32_t)clamp) {
         value = clamp;
     }
