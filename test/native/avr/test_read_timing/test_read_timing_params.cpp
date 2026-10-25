@@ -774,6 +774,27 @@ void test_issue120_direct_write_accepts_valid_end_boundary(void) {
     TEST_ASSERT_EQUAL_UINT32(1, issue120_writes);
 }
 
+/* 25000 mV is the highest VPP in the chip database; one millivolt above it
+ * is refused, and so is a value the field table saturates to 65535. */
+void test_vpp_mv_at_the_database_maximum_is_accepted(void) {
+    firestarter_handle_t h = make_handle(CMD_WRITE);
+    TEST_ASSERT_EQUAL_INT(0, parse_json(
+        "{\"cmd\":2,\"memory-size\":65536,\"algorithm\":7,"
+        "\"pin-count\":28,\"vpp_mv\":25000}", &h));
+    TEST_ASSERT_EQUAL_UINT16(25000, h.vpp_mv);
+    TEST_ASSERT_TRUE(json_memory_params_valid(&h));
+}
+
+void test_vpp_mv_above_the_database_maximum_is_refused(void) {
+    firestarter_handle_t h = make_handle(CMD_WRITE);
+    TEST_ASSERT_EQUAL_INT(-1, parse_json(
+        "{\"cmd\":2,\"memory-size\":65536,\"algorithm\":7,"
+        "\"pin-count\":28,\"vpp_mv\":25001}", &h));
+    TEST_ASSERT_EQUAL_INT(-1, parse_json(
+        "{\"cmd\":2,\"memory-size\":65536,\"algorithm\":7,"
+        "\"pin-count\":28,\"vpp_mv\":4294967295}", &h));
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -812,5 +833,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_issue120_read_end_is_empty_and_last_byte_is_read);
     RUN_TEST(test_issue120_direct_write_and_verify_refuse_out_of_range);
     RUN_TEST(test_issue120_direct_write_accepts_valid_end_boundary);
+    RUN_TEST(test_vpp_mv_at_the_database_maximum_is_accepted);
+    RUN_TEST(test_vpp_mv_above_the_database_maximum_is_refused);
     return UNITY_END();
 }

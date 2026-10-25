@@ -56,6 +56,13 @@ static unsigned long simple_strtoul(const char* s) {
     jsoneq_(json, tok, PSTR(s))
 
 /*
+ * Highest VPP any chip needs, in millivolts. The chip database tops out at
+ * 25000 mV (rows that take VPP straight from the VPE rail). A request above
+ * this is refused.
+ */
+#define VPP_MV_MAX 25000UL
+
+/*
  * Read-timing sweep knobs, clamped at parse time so an absurd JSON value
  * cannot reach delayMicroseconds() unbounded. Values < 3 us are below
  * delayMicroseconds() accuracy on a 16 MHz AVR.
@@ -352,6 +359,9 @@ int json_parse(const char* json, jsmntok_t* tokens, int token_count, firestarter
             // Unknown field — skip key + value token (forward-compatible with new Python fields)
             token_idx += 2;
         }
+    }
+    if (handle->vpp_mv > VPP_MV_MAX) {
+        return -1; // Above the highest VPP any chip needs
     }
     if (handle->bus_config.address_lines[0] == 0xFF) {
         handle->bus_config.address_mask = 0xFFFF;
