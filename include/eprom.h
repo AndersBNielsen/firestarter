@@ -38,6 +38,10 @@ extern "C" {
      */
     rurp_register_t eprom_hv_route_mask(firestarter_handle_t* handle);
 
+    /* Widest pulse configure_eprom accepts, in microseconds. A wider pulse is
+     * refused, never clamped. */
+    #define EPROM_PULSE_MAX_US 65535UL
+
     /* Intra-block progress cadence. The emission it paces is compiled out
      * entirely on uno/uno328pb — see eprom.cpp for why. */
     #define EPROM_PROGRESS_EMIT_INTERVAL_MS 1000

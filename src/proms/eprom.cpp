@@ -16,6 +16,7 @@
 #include "rurp_shield.h"
 #include "rurp_pinout.h"
 #include "operation_utils.h"
+#include "proto_constants.h"
 
 
 void eprom_erase_execute(firestarter_handle_t* handle);
@@ -33,7 +34,7 @@ void eprom_internal_check_chip_id(firestarter_handle_t* handle, uint8_t error_co
 void eprom_internal_erase(firestarter_handle_t* handle);
 
 void eprom_internal_set_control_register(firestarter_handle_t* handle, rurp_register_t bit, bool cmd);
-void (*ep_set_control_register)(struct firestarter_handle*, rurp_register_t, bool);
+static void (*ep_set_control_register)(struct firestarter_handle*, rurp_register_t, bool);
 
 void eprom_generic_init(firestarter_handle_t* handle);
 
@@ -62,9 +63,9 @@ void configure_eprom(firestarter_handle_t* handle) {
     // Set default pulse_delay from protocol when Python doesn't supply one
     if (handle->pulse_delay == 0) {
         switch (handle->protocol) {
-            case 0x08: handle->pulse_delay = 100;  break;  // EPROM_QUICK: 100µs
-            case 0x0B: handle->pulse_delay = 500;  break;  // EPROM_LEGACY: 500µs
-            default:   handle->pulse_delay = 1000; break;  // EPROM_STD: 1ms
+            case PROTO_EPROM_32PIN: handle->pulse_delay = 100;  break;  // 100µs
+            case PROTO_EPROM_24PIN: handle->pulse_delay = 500;  break;  // 500µs
+            default:                handle->pulse_delay = 1000; break;  // 1ms
         }
     }
 
@@ -83,16 +84,16 @@ void configure_eprom(firestarter_handle_t* handle) {
         return;
     }
 
-    // Refusal 2: a pulse wider than this row's program-energy budget is refused
-    // pre-flight, before any high voltage is enabled, and NEVER silently clamped
-    // -- clamping emits a pulse whose width no longer matches what the caller
-    // asked for, then reports a verify failure: a misconfiguration wearing a
-    // silicon-failure costume.
+    // Refusal 2: a pulse wider than EPROM_PULSE_MAX_US, or wider than this row's
+    // program-energy budget, is refused pre-flight, before any high voltage is
+    // enabled, and never silently clamped -- a clamped pulse no longer matches
+    // what the caller asked for, and then reports as a verify failure.
     //
     // energy_cap_us > 0 is mandatory: 0 means UNCAPPED, not "cap at zero". An
     // unguarded compare refuses every 0x07/0x08 pulse -- both ship 0.
     uint32_t energy_cap_us = pgm_read_dword(&row->energy_cap_us);
-    if (energy_cap_us > 0 && handle->pulse_delay > energy_cap_us) {
+    if (handle->pulse_delay > EPROM_PULSE_MAX_US ||
+        (energy_cap_us > 0 && handle->pulse_delay > energy_cap_us)) {
         LOG_ERROR_ID_U32(MSG_ERR_PULSE_TOO_WIDE, handle->pulse_delay);
         handle->response_code = RESPONSE_CODE_ERROR;
         return;
@@ -114,25 +115,22 @@ void eprom_erase_execute(firestarter_handle_t* handle) {
 }
 
 /*
- * DEFENSIVE, not corrective: neither exit of this body leaks a route today.
- * It is wrapped anyway because eprom_internal_erase's assert is the only
- * write-path code that raises A9 together with VPE, and that assert's safety
- * rests on there being no `return` between it and its own clear -- a property
- * a future edit could otherwise break silently.
+ * Wrapped so the single-exit clear covers every exit of this body.
+ * eprom_internal_erase's assert is the only write-path code that raises A9
+ * together with VPE, and that assert's safety rests on there being no `return`
+ * between it and its own clear.
  */
 static void eprom_internal_write_init_body(firestarter_handle_t* handle) {
-    if(!is_operation_in_progress(handle)){
-        eprom_generic_init(handle);
-        if (handle->response_code == RESPONSE_CODE_ERROR) {
-            return;
-        }
+    eprom_generic_init(handle);
+    if (handle->response_code == RESPONSE_CODE_ERROR) {
+        return;
+    }
 
-        if (is_flag_set(FLAG_CAN_ERASE)) {
-            if (!is_flag_set(FLAG_SKIP_ERASE)) {
-                eprom_internal_erase(handle);
-            } else {
-                LOG_INFO_ID(MSG_INFO_SKIPPING_ERASE);
-            }
+    if (is_flag_set(FLAG_CAN_ERASE)) {
+        if (!is_flag_set(FLAG_SKIP_ERASE)) {
+            eprom_internal_erase(handle);
+        } else {
+            LOG_INFO_ID(MSG_INFO_SKIPPING_ERASE);
         }
     }
 }
@@ -254,6 +252,14 @@ rurp_register_t eprom_hv_route_mask(firestarter_handle_t* handle) {
 /* The public write wrapper owns high-voltage shutdown, including early
  * exits from this internal body. */
 static void eprom_internal_write_execute_body(firestarter_handle_t* handle) {
+    const eprom_params_t* row = eprom_params_for(handle->protocol);
+    if (row == NULL) {
+        // configure_eprom already refuses an unknown protocol, so this is
+        // unreachable. It fails closed before any route is asserted.
+        LOG_ERROR_ID_U8(MSG_ERR_PROTOCOL_NOT_IMPLEMENTED, (uint8_t)handle->protocol);
+        handle->response_code = RESPONSE_CODE_ERROR;
+        return;
+    }
     // Select the program-voltage route once per block using the protocol.
     if (handle->firestarter_get_control_register(handle, CTRL_VPP_REGULATOR_ENABLE) == 0) {
         handle->firestarter_set_control_register(handle, eprom_hv_route_mask(handle), 1);
@@ -263,13 +269,8 @@ static void eprom_internal_write_execute_body(firestarter_handle_t* handle) {
     // Do NOT add a pins>=32 clear here. mem_util_calculate_top_address_register's
     // revision-gated preserve mask lets CTRL_VPP_VPE_DROP_ENABLE survive a 32-pin
     // block's set_address() on Rev 2-class hardware; an explicit clear would strip
-    // the very bit the guard above just asserted, on every revision.
+    // the very bit asserted above, on every revision.
 
-    const eprom_params_t* row = eprom_params_for(handle->protocol);
-    if (row == NULL) {
-        // Fail closed if a protocol has no parameter row; never dereference NULL.
-        return;
-    }
     uint32_t energy_cap_us      = pgm_read_dword(&row->energy_cap_us);
     uint8_t  max_pulses         = pgm_read_byte(&row->max_pulses);
 #if EPROM_OVERPROGRAM_SUPPORTED

@@ -211,8 +211,9 @@ pass.
 **Error IDs per row:**
 
 - `MSG_ERR_MAX_PULSES` (`0xBD`) can occur on all three rows.
-- `MSG_ERR_ENERGY_CAP` (`0xBE`) and the pre-flight refusal `MSG_ERR_PULSE_TOO_WIDE` (`0xAE`) need
-  `energy_cap_us > 0`. They can occur on `0x0B` only.
+- `MSG_ERR_ENERGY_CAP` (`0xBE`) needs `energy_cap_us > 0`. It can occur on `0x0B` only.
+- The pre-flight refusal `MSG_ERR_PULSE_TOO_WIDE` (`0xAE`) can occur on all three rows for a pulse
+  above `EPROM_PULSE_MAX_US` (65535µs). On `0x0B` it also occurs for a pulse above `energy_cap_us`.
 
 **The `0x0B` energy cap.** Each shipped pulse width divides 50000µs exactly. 200µs, 500µs and 1000µs
 give 250, 100 and 50 pulses. With an arbitrary `--pulse-us` value `w`, the total at failure is
@@ -330,10 +331,11 @@ field at the end of the ack therefore needs no catalog edit and no codegen run.
 
 **`--pulse-us` and the wire.** The host option `firestarter write --pulse-us N` accepts `1..65535`.
 That range copies minipro, where `-o pulse=N` is a `uint16`. **It is not a wire limit.**
-`extract_long` in `json_parser.c` reads `pulse-delay` into a `uint32_t` with no clamp. The firmware
-limit is the pre-flight refusal `MSG_ERR_PULSE_TOO_WIDE` (`0xAE`) in `configure_eprom`. It uses
-`energy_cap_us` and runs before any high voltage is on. Only the `0x0B` row can trigger it, so the
-host copies no table value to prevent it.
+`json_parser.c` reads `pulse-delay` into a `uint32_t` with no clamp. The firmware limit is the
+pre-flight refusal `MSG_ERR_PULSE_TOO_WIDE` (`0xAE`) in `configure_eprom`. It runs before any high
+voltage is on. It refuses a pulse above `EPROM_PULSE_MAX_US` (65535µs) on every row, and a pulse
+above `energy_cap_us` on the `0x0B` row. The host range never reaches the first limit, so the host
+copies no table value to prevent it.
 
 ### Key Files
 
