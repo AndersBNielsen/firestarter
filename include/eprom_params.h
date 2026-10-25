@@ -19,7 +19,7 @@
  * NO PULSE-WIDTH COLUMN. Pulse width is handle->pulse_delay; the per-protocol
  * fallbacks stay in configure_eprom's switch and are not duplicated here.
  *
- * Per-cell datasheet attribution lives in the gate-enforced sidecar
+ * Per-cell datasheet attribution lives in the sidecar
  * tests/golden/eprom_params_citations.json, not here.
  */
 #ifndef __EPROM_PARAMS_H__

@@ -20,7 +20,7 @@ static const uint8_t EPROM_PARAM_KEYS[] PROGMEM = { 0x07, 0x08, 0x0B };
 
 /*
  * Per-cell attribution -- family, representative part, datasheet revision, or
- * an explicit "no datasheet basis" note -- lives in the gate-enforced sidecar
+ * an explicit "no datasheet basis" note -- lives in the sidecar
  * tests/golden/eprom_params_citations.json.
  *
  * Known divergence, recorded rather than dropped: the 22 Intel-family 1 ms

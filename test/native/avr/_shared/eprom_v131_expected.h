@@ -45,8 +45,7 @@
  * key each timing_entry_t carries (its `seq`, the strobe_count() value at
  * push time). See v131_merged_at() below for the exact splice rule.
  *
- * This fixture now arms the identity gate for v1.32 drift detection
- * (tests/golden/eprom_v131_trace_inventory.json's meta.frozen_for): a future
+ * These arrays are frozen for drift detection: a future
  * divergence from the three arrays below is a regression to investigate,
  * not expected work — the inverse framing of what this file's banner said
  * before this capture replaced it.
@@ -216,8 +215,7 @@ static int v131_snapshot(v131_trace_entry_t* out, int max_len) {
 
 /* ─── EPROM_V131_TRACE_PROTO_07 -- AM27C512, protocol 0x07, DIP28_27512 ─────
  * This is the POST-v1.31, post-route-assert-fix cadence, now frozen for
- * v1.32 drift detection
- * (tests/golden/eprom_v131_trace_inventory.json's meta.frozen_for) -- a
+ * drift detection -- a
  * future divergence from this array is a regression to investigate, not
  * expected work.
  */
@@ -358,8 +356,7 @@ static const v131_trace_entry_t EPROM_V131_TRACE_PROTO_07[] = {
 
 /* ─── EPROM_V131_TRACE_PROTO_08 -- AM27C020, protocol 0x08, DIP32_27C020 ────
  * This is the POST-v1.31, post-route-assert-fix cadence, now frozen for
- * v1.32 drift detection
- * (tests/golden/eprom_v131_trace_inventory.json's meta.frozen_for) -- a
+ * drift detection -- a
  * future divergence from this array is a regression to investigate, not
  * expected work.
  */
@@ -518,8 +515,7 @@ static const v131_trace_entry_t EPROM_V131_TRACE_PROTO_08[] = {
 
 /* ─── EPROM_V131_TRACE_PROTO_0B -- AM2716, protocol 0x0B, DIP24_2716 ────────
  * This is the POST-v1.31, post-route-assert-fix cadence, now frozen for
- * v1.32 drift detection
- * (tests/golden/eprom_v131_trace_inventory.json's meta.frozen_for) -- a
+ * drift detection -- a
  * future divergence from this array is a regression to investigate, not
  * expected work.
  */
