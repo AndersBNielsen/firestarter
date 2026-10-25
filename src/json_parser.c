@@ -42,11 +42,27 @@ static long s_measured_vcc_mv = 0;
 
 static int jsoneq_(const char* json, jsmntok_t* tok, const char* s);
 
+/*
+ * Set when a number does not fit in 32 bits. json_get_cmd, json_parse and
+ * json_parse_config clear it on entry and refuse the frame when it is set, so
+ * a wrapped value never reaches a field's saturate or mask policy.
+ */
+static bool s_number_overflow = false;
+
 static unsigned long simple_strtoul(const char* s) {
-    unsigned long val = 0;
+    uint32_t val = 0;
     // Note: This simple implementation only handles positive decimal numbers.
     while (*s >= '0' && *s <= '9') {
-        val = val * 10 + (*s - '0');
+        uint8_t digit = (uint8_t)(*s - '0');
+        // val * 10 cannot wrap below this bound; the sum wraps only when the
+        // result ends up smaller than the digit that was added.
+        if (val > 0xFFFFFFFFUL / 10) {
+            s_number_overflow = true;
+        }
+        val = val * 10 + digit;
+        if (val < digit) {
+            s_number_overflow = true;
+        }
         s++;
     }
     return val;
@@ -280,6 +296,7 @@ static void store_field(firestarter_handle_t* handle, const field_desc_t* field,
  * protocol default). No temporary copy of the handle is needed on AVR.
  */
 static void json_reset_command_parameters(firestarter_handle_t* handle) {
+    s_number_overflow = false;
     handle->protocol = 0;
     handle->pins = 0;
     handle->mem_size = 0;
@@ -353,6 +370,9 @@ int json_parse(const char* json, jsmntok_t* tokens, int token_count, firestarter
             token_idx += 2;
         }
     }
+    if (s_number_overflow) {
+        return -1; // A number did not fit in 32 bits
+    }
     if (handle->bus_config.address_lines[0] == 0xFF) {
         handle->bus_config.address_mask = 0xFFFF;
     }
@@ -389,6 +409,7 @@ bool json_memory_params_valid(const firestarter_handle_t* handle) {
 int json_parse_config(const char* json, jsmntok_t* tokens, int token_count, rurp_configuration_t* config, firestarter_handle_t* handle) {
     int res = 0;
     s_measured_vcc_mv = 0;  // never let a value survive into a later command
+    s_number_overflow = false;
     for (int i = 1; i < token_count; i++) {
         if (get_cmd(json, tokens, i) != 0xFF) {
             i++;
@@ -422,12 +443,13 @@ int json_parse_config(const char* json, jsmntok_t* tokens, int token_count, rurp
             return -1;
         }
     }
-    return res;
+    return s_number_overflow ? -1 : res;
 }
 
 uint8_t json_get_cmd(const char* json, jsmntok_t* tokens, int token_count, firestarter_handle_t* handle) {
     handle->cmd = 0xFF;
     handle->ctrl_flags = 0;
+    s_number_overflow = false;
     bool found_flags = false;
     for (int i = 0; i < token_count; i++) {
         uint8_t cmd = get_cmd(json, tokens, i);
@@ -442,12 +464,18 @@ uint8_t json_get_cmd(const char* json, jsmntok_t* tokens, int token_count, fires
             break;
         }
     }
+    if (s_number_overflow) {
+        handle->cmd = 0xFF;  // refused as a frame without a usable command
+    }
     return handle->cmd;
 }
 
 uint8_t get_cmd(const char* json, jsmntok_t* tokens, int pos) {
     if (jsoneq(json, &tokens[pos], "cmd") == 0 || jsoneq(json, &tokens[pos], "state") == 0) {
-        return simple_strtoul(json + tokens[pos + 1].start);
+        // A value above the uint8_t range must not truncate onto a real
+        // command (257 would become CMD_READ); 0xFF means "no command".
+        unsigned long cmd = simple_strtoul(json + tokens[pos + 1].start);
+        return cmd > 0xFF ? 0xFF : (uint8_t)cmd;
     }
     return 0xFF;
 }

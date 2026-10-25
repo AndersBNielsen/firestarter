@@ -774,6 +774,8 @@ void test_issue120_direct_write_accepts_valid_end_boundary(void) {
     TEST_ASSERT_EQUAL_UINT32(1, issue120_writes);
 }
 
+void run_json_hardening_tests(void);
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -812,5 +814,6 @@ int main(int argc, char** argv) {
     RUN_TEST(test_issue120_read_end_is_empty_and_last_byte_is_read);
     RUN_TEST(test_issue120_direct_write_and_verify_refuse_out_of_range);
     RUN_TEST(test_issue120_direct_write_accepts_valid_end_boundary);
+    run_json_hardening_tests();
     return UNITY_END();
 }
