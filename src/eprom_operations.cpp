@@ -93,6 +93,15 @@ static inline bool _process_incoming_data(firestarter_handle_t* handle) {
 
     switch (msg_type) {
         case OP_MSG_DONE:
+            // Without a region-end the host may end the write at any cursor.
+            // With one, the write is complete only at op_end, and the check
+            // above finishes it there before any message is read. A DONE
+            // before op_end means the host sent less data than it declared.
+            if (handle->region_end != 0) {
+                LOG_ERROR_ID(MSG_ERR_CMD);
+                handle->response_code = RESPONSE_CODE_ERROR;
+                return false;
+            }
             set_operation_to_done(handle);
             return true;
         case OP_MSG_DATA:
