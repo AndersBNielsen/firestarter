@@ -102,6 +102,12 @@ bool op_wait_for_ack(firestarter_handle_t* handle) {
         if (msg_type == OP_MSG_ERROR) {
             return false;
         }
+        if (msg_type == OP_MSG_DONE) {
+            // The host ended the command where an ACK was expected. Report
+            // it at once instead of waiting for the ACK timeout.
+            LOG_ERROR_ID(MSG_ERR_CMD);
+            return false;
+        }
         delay(10);
     }
     LOG_ERROR_ID(MSG_ERR_TIMEOUT);

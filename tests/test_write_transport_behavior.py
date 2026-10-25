@@ -218,6 +218,39 @@ int main() {
     assert(count(MSG_ERR_OUT_OF_RANGE) == 1 && written.size() == 32);
     puts("PASS late data refused");
 
+    // A stray ACK in the write loop gets an error frame, not silence.
+    reset(CMD_WRITE, 0, 1024, 64);
+    host_file = 64;
+    host_reply = "OK";
+    run(eprom_write);
+    assert(count(MSG_ERR_CMD) == 1);
+    assert(count(MSG_MAIN_DONE) == 0);
+    assert(written.empty());
+    puts("PASS stray ACK refused");
+
+    // A read without region-end runs to mem_size in whole chunks.
+    reset(CMD_READ, 0, 160, 0);
+    run(eprom_read);
+    assert(!has_error());
+    assert(chunks.size() == 3 && chunks[0] == 64 && chunks[1] == 64 && chunks[2] == 32);
+    assert(count(MSG_MAIN_DONE) == 1);
+    puts("PASS read to mem_size");
+
+    // A read with region-end stops there and cuts the last chunk.
+    reset(CMD_READ, 16, 1024, 16 + 100);
+    run(eprom_read);
+    assert(!has_error());
+    assert(chunks.size() == 2 && chunks[0] == 64 && chunks[1] == 36);
+    assert(handle.address == 116);
+    puts("PASS read honours region end");
+
+    // DONE where the read expects a chunk ACK ends the command at once.
+    reset(CMD_READ, 0, 1024, 0);
+    host_reply = "DONE";
+    run(eprom_read);
+    assert(count(MSG_ERR_CMD) == 1 && count(MSG_ERR_TIMEOUT) == 0);
+    assert(fake_ms < 1000);
+    puts("PASS DONE in ACK wait");
     return 0;
 }
 """
@@ -251,4 +284,8 @@ def test_write_and_read_transfer_loops(tmp_path: Path) -> None:
         "PASS early DONE refused",
         "PASS unbounded DONE accepted",
         "PASS late data refused",
+        "PASS stray ACK refused",
+        "PASS read to mem_size",
+        "PASS read honours region end",
+        "PASS DONE in ACK wait",
     ]
