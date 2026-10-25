@@ -275,7 +275,6 @@ void test_window_percentage_applies_above_the_crossover(void) {
     TEST_ASSERT_EQUAL(RESPONSE_CODE_ERROR, run_at(25000, 25751, 0));
     // The case the retune exists for: a reading the OLD threshold refused and
     // the new one accepts, because 25501 is inside the measurement error.
-    TEST_ASSERT_EQUAL_UINT16(25500, 25000 + 500);
     TEST_ASSERT_NOT_EQUAL(RESPONSE_CODE_ERROR, run_at(25000, 25501, 0));
 }
 

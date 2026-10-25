@@ -269,9 +269,7 @@ The six writes are inline, not a `.data` table, so the erase uses 0 bytes of RAM
 exists.
 
 **Do not implement the datasheet *hardware* Chip Erase mode.** It needs **12V on OE, pin 22** of
-`DIP28_28C256`, and that voltage damages a 5V part. `scripts/check_erase_no_vpp.py` scans the body
-of `eeprom28c_erase_execute` and fails on any control-register high-voltage write. That script is a
-legacy source scan, not a guard. Do not add that 12V path from the datasheet. For the same reason, algorithm 5
+`DIP28_28C256`, and that voltage damages a 5V part. Do not add that 12V path from the datasheet. For the same reason, algorithm 5
 never gets `FLAG_CAN_ERASE`. No firmware function implements the 12V path.
 
 `write` does **no blank check** on this protocol. Each page write erases the page internally. The
