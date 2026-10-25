@@ -102,11 +102,10 @@ void flash_nor_unlock_erase_execute(firestarter_handle_t* handle) {
     if (handle->address != 0) {
         LOG_DEBUG_ID_SUB(DBG_SECTOR_ERASE);
         flash_nor_unlock_sector_erase(handle, handle->address);
+        flash_util_wait_erase(handle, handle->address);
     } else {
-        LOG_DEBUG_ID_SUB(DBG_CHIP_ERASE);
-        flash_execute_command(FLASH_ERASE);
+        flash_util_chip_erase(handle);
     }
-    flash_util_wait_erase(handle, handle->address);
 }
 
 void flash_nor_unlock_sector_erase(firestarter_handle_t* handle, uint32_t sector_address) {

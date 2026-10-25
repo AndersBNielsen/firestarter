@@ -140,6 +140,15 @@ extern "C" {
     bool flash_util_wait_program(firestarter_handle_t* handle, uint32_t address, uint8_t expected);
     bool flash_util_wait_erase(firestarter_handle_t* handle, uint32_t address);
 
+    /* Software chip erase, shared by protocols 0x05 and 0x06: the six-cycle
+     * AA/55/80/AA/55/10 sequence at 5555/2AAA, then flash_util_wait_erase at
+     * address 0. Polling starts only after FLASH_CHIP_ERASE_MIN_MS, the longest
+     * chip erase of the 0x05 parts (50 ms, W29C020C), because not every one of
+     * their datasheets says Data# polling runs during a chip erase. The
+     * AMD-style 0x06 parts erase for seconds, so the delay costs them nothing. */
+    #define FLASH_CHIP_ERASE_MIN_MS 50U
+    void flash_util_chip_erase(firestarter_handle_t* handle);
+
     /* Shared AMD/JEDEC chip-ID read and mismatch check.
      * Used by flash_nor_unlock and flash_5v_page to avoid duplicating the
      * FLASH_ENABLE_ID / FLASH_DISABLE_ID command sequence.

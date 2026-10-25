@@ -80,6 +80,13 @@ bool flash_util_wait_erase(firestarter_handle_t* handle, uint32_t address) {
     return false;
 }
 
+void flash_util_chip_erase(firestarter_handle_t* handle) {
+    LOG_DEBUG_ID_SUB(DBG_CHIP_ERASE);
+    flash_execute_command(FLASH_ERASE);
+    delay(FLASH_CHIP_ERASE_MIN_MS);
+    flash_util_wait_erase(handle, 0);
+}
+
 // Command cycles take the same address path as a data write: the upper
 // address lines and the chip's bus remapping both apply. Only the strobe is
 // different -- a bare CE pulse, with no settle delay and no pulse width.

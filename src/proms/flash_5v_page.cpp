@@ -28,10 +28,6 @@
 // starts after the window.
 #define FLASH_5V_PAGE_TBLC_US 300U
 
-// Chip erase time, maximum: 50 ms on the W29C020C (and the AE29F2008 that
-// shares its ID), 20 ms on the AT29C and SST29EE parts.
-#define FLASH_5V_PAGE_CHIP_ERASE_MS 50U
-
 static bool flash_5v_page_mask(uint16_t requested, uint32_t* out_mask) {
     if (requested == 0) {
         return false;
@@ -46,7 +42,6 @@ static bool flash_5v_page_mask(uint16_t requested, uint32_t* out_mask) {
 void flash_5v_page_write_init(firestarter_handle_t* handle);
 void flash_5v_page_write_execute(firestarter_handle_t* handle);
 void flash_5v_page_check_chip_id_execute(firestarter_handle_t* handle);
-void flash_5v_page_erase_execute(firestarter_handle_t* handle);
 static bool flash_5v_page_wait_for_page_write(firestarter_handle_t* handle, uint32_t address, uint8_t expected);
 
 uint16_t flash_5v_page_get_chip_id(firestarter_handle_t* handle);
@@ -62,9 +57,15 @@ void configure_flash_5v_page(firestarter_handle_t* handle) {
             handle->firestarter_operation_init = NULL;
             handle->firestarter_operation_main = flash_5v_page_check_chip_id_execute;
             break;
+        // Software chip erase (#62): the W29C020C "Software Chip Erase"
+        // command, which the AT29C and SST29EE parts share, at the same
+        // 5555/2AAA unlock addresses as this protocol's page writes. Address 0
+        // must read 0xFF afterwards: a part whose boot-block lockout is set
+        // ignores the chip erase, and that check catches it when the locked
+        // block is at address 0.
         case CMD_ERASE:
             handle->firestarter_operation_init = flash_util_check_chip_id_init;
-            handle->firestarter_operation_main = flash_5v_page_erase_execute;
+            handle->firestarter_operation_main = flash_util_chip_erase;
             break;
         // A second query arm, modelled on CMD_CHECK_CHIP_ID just above.
         // Unlike flash_nor_unlock.cpp, this
@@ -153,23 +154,6 @@ static bool flash_5v_page_wait_for_page_write(firestarter_handle_t* handle, uint
     LOG_ERROR_ID_BYTES(MSG_ERR_FL4_VERIFY_TIMEOUT, _b, 5);
     handle->response_code = RESPONSE_CODE_ERROR;
     return false;
-}
-
-// Software chip erase (#62): the six-cycle AA/55/80/AA/55/10 sequence at
-// 5555/2AAA that the W29C020C datasheet lists as its "Software Chip Erase"
-// command, and that the AT29C and SST29EE parts share. The page writes of this
-// protocol already use the same unlock addresses.
-//
-// The datasheets do not all say that Data# polling runs during a chip erase,
-// so the maximum erase time passes first and the poll then confirms the end.
-// The erase must leave address 0 at 0xFF: a part whose boot-block lockout is
-// set ignores the chip erase, and that check is what catches it when the
-// locked block is at address 0.
-void flash_5v_page_erase_execute(firestarter_handle_t* handle) {
-    LOG_DEBUG_ID_SUB(DBG_CHIP_ERASE);
-    flash_execute_command(FLASH_ERASE);
-    delay(FLASH_5V_PAGE_CHIP_ERASE_MS);
-    flash_util_wait_erase(handle, 0);
 }
 
 void flash_5v_page_check_chip_id_execute(firestarter_handle_t* handle) {
