@@ -69,6 +69,18 @@ extern "C" {
 #endif
 
 /*
+ * Whether this platform reads its rails against the stored bandgap_mv, so
+ * that a bandgap calibration changes a reading. The PY32 port reads against
+ * VREFINT at a fixed 1200 mV and never reads bandgap_mv. There, a calibration
+ * request is refused and no uncalibrated warning is sent.
+ */
+#if defined(RURP_PLATFORM_PY32F071)
+#define RURP_HAS_BANDGAP_CAL 0
+#else
+#define RURP_HAS_BANDGAP_CAL 1
+#endif
+
+/*
  * Guards that keep both products inside uint32 in rurp_scale_voltage_mv:
  * RURP_BANDGAP_NOMINAL_MV * (r1 + r2) needs r1 + r2 <= 3904515, and
  * adc * k needs k <= 4198404 for adc <= 1023. The shipped bounds sit just

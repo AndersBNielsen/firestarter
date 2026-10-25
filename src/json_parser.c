@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include "jsmn.h"
+#include "rurp_voltage_math.h"
 
 uint8_t get_cmd(const char* json, jsmntok_t* tokens, int pos);
 
@@ -24,8 +25,10 @@ bool get_vpp_pin(const char* json, jsmntok_t* tokens, int pos, firestarter_handl
 bool get_r1(const char* json, jsmntok_t* tokens, int pos, rurp_configuration_t* config);
 bool get_r2(const char* json, jsmntok_t* tokens, int pos, rurp_configuration_t* config);
 bool get_rev(const char* json, jsmntok_t* tokens, int pos, rurp_configuration_t* config);
+#if RURP_HAS_BANDGAP_CAL
 bool get_vcc(const char* json, jsmntok_t* tokens, int pos, rurp_configuration_t* config);
 bool get_bg(const char* json, jsmntok_t* tokens, int pos, rurp_configuration_t* config);
+#endif
 
 /*
  * The operator's measured supply voltage, in millivolts, for a calibration.
@@ -389,13 +392,18 @@ int json_parse_config(const char* json, jsmntok_t* tokens, int token_count, rurp
         } else if (get_r2(json, tokens, i, config)) {
             i++;
             res |= JSON_CFG_FIELD_CHANGED;
-        } else if (get_vcc(json, tokens, i, config)) {
+        }
+#if RURP_HAS_BANDGAP_CAL
+        else if (get_vcc(json, tokens, i, config)) {
             i++;
             res |= JSON_CFG_CALIBRATE;
         } else if (get_bg(json, tokens, i, config)) {
             i++;
             res |= JSON_CFG_FIELD_CHANGED;
-        } else {
+        }
+#endif
+        else {
+            // Includes vcc and bg on a platform without bandgap calibration.
             return -1;
         }
     }
@@ -553,6 +561,7 @@ bool get_rev(const char* json, jsmntok_t* tokens, int pos, rurp_configuration_t*
     extract_int("rev", config->hardware_revision);
 }
 
+#if RURP_HAS_BANDGAP_CAL
 bool get_vcc(const char* json, jsmntok_t* tokens, int pos, rurp_configuration_t* config) {
     (void)config;
     extract_long("vcc", s_measured_vcc_mv);
@@ -560,13 +569,14 @@ bool get_vcc(const char* json, jsmntok_t* tokens, int pos, rurp_configuration_t*
 
 /*
  * Write the stored bandgap directly. This is the escape hatch -- restoring the
- * nominal, or re-applying a calibration recorded elsewhere. The value is still
- * range-checked by rurp_config_migrate before it is ever used, so a bad one
- * cannot reach the conversion.
+ * nominal, or re-applying a calibration recorded elsewhere. The config command
+ * refuses an out-of-band value before it is stored, so a bad one cannot reach
+ * the conversion.
  */
 bool get_bg(const char* json, jsmntok_t* tokens, int pos, rurp_configuration_t* config) {
     extract_int("bg", config->bandgap_mv);
 }
+#endif
 
 long json_config_measured_vcc_mv(void) {
     return s_measured_vcc_mv;
