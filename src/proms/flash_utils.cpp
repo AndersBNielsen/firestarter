@@ -14,9 +14,7 @@
 #include "timeout_utils.h"
 #include <stdio.h>
 
-
 void fu_flash_flip_data(firestarter_handle_t* handle, uint32_t address, uint8_t data);
-void fu_flash_fast_address(firestarter_handle_t* handle, uint32_t address);
 uint8_t fu_flash_data_poll();
 
 void flash_util_byte_flipping(firestarter_handle_t* handle, const byte_flip_t* byte_flips, size_t size) {
@@ -51,20 +49,16 @@ void flash_util_verify_operation(firestarter_handle_t* handle, uint8_t expected_
     return;
 }
 
+// Command cycles take the same address path as a data write: the upper
+// address lines and the chip's bus remapping both apply. Only the strobe is
+// different -- a bare CE pulse, with no settle delay and no pulse width.
 void fu_flash_flip_data(firestarter_handle_t* handle, uint32_t address, uint8_t data) {
     rurp_set_data_output();
-    fu_flash_fast_address(handle, address);
+    handle->firestarter_set_address(handle, mem_util_remap_address_bus(handle, address, WRITE_FLAG));
     rurp_write_data_buffer(data);
     rurp_chip_input();
     rurp_chip_enable();
     rurp_chip_disable();
-}
-
-void fu_flash_fast_address(firestarter_handle_t* handle, uint32_t address) {
-    uint8_t lsb = address & 0xFF;
-    rurp_write_to_register(LEAST_SIGNIFICANT_BYTE, lsb);
-    uint8_t msb = ((address >> 8) & 0xFF);
-    rurp_write_to_register(MOST_SIGNIFICANT_BYTE, msb);
 }
 
 uint8_t fu_flash_data_poll() {

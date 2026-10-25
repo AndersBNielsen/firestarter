@@ -40,6 +40,21 @@ extern "C" {
 
 using namespace fakeit;
 
+/* DIP32_SST39SF040, the pin map of every 32-pin 0x05/0x06 row, as the host
+ * sends it: A0-A16 on bus lines 0-16, A17 on line 20, A18 on line 21, and WE
+ * (pin 31) on line 22, the CTRL_READ_WRITE bit. Command cycles take the full
+ * remap path, and a zeroed bus_config is not an identity map: it folds every
+ * address onto bus line 0. */
+static const bus_config_t DIP32_FLASH_BUS = {
+    { 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+      0x10, 0x14, 0x15, 0xFF },
+    0x0031FFFFUL,
+    17,
+    22,
+    0xFF,
+    0x00000000UL
+};
+
 /* Recording API — symbols compiled because host_stubs.cpp defines HOST_STUBS_RECORD_BUS. */
 extern "C" void clear_bus_recording();
 extern "C" int  bus_recording_count();
@@ -72,6 +87,7 @@ void tearDown(void) {}
 
 static firestarter_handle_t make_handle(uint8_t cmd) {
     firestarter_handle_t h = {};
+    h.bus_config = DIP32_FLASH_BUS;
     h.protocol   = 0x06;
     h.cmd        = cmd;
     h.response_code = RESPONSE_CODE_OK;
@@ -266,6 +282,54 @@ void test_nor_unlock_lock_status_mode_bracketing(void) {
     TEST_ASSERT_EQUAL_HEX8(0x55, msb[6]);
 }
 
+/* Issue #117: the sector-select cycle of a sector erase must drive A16+.
+ * Each command cycle latches LSB, MSB and then CONTROL, which carries A16
+ * (CTRL_ADDRESS_LINE_16), A17 and A18 on DIP32_FLASH_BUS. The recorder keeps
+ * every register write, so the record after the last MSB write is the
+ * sector-select cycle's CONTROL write. */
+static void assert_sector_select_latches(uint32_t sector, uint8_t lsb, uint8_t msb, uint8_t top) {
+    firestarter_handle_t h = make_handle(CMD_ERASE);
+    h.address = sector;
+    configure_memory(&h);
+    clear_bus_recording();
+
+    h.firestarter_operation_main(&h);
+
+    int last_msb = -1;
+    for (int i = 0; i < bus_recording_count(); i++) {
+        if (recorded_reg(i) == MOST_SIGNIFICANT_BYTE) {
+            last_msb = i;
+        }
+    }
+    TEST_ASSERT_TRUE_MESSAGE(last_msb > 0 && last_msb + 1 < bus_recording_count(),
+        "the sector erase must latch an address and then a CONTROL value");
+    TEST_ASSERT_EQUAL_HEX8(LEAST_SIGNIFICANT_BYTE, recorded_reg(last_msb - 1));
+    TEST_ASSERT_EQUAL_HEX8(lsb, recorded_data(last_msb - 1));
+    TEST_ASSERT_EQUAL_HEX8(msb, recorded_data(last_msb));
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(CONTROL_REGISTER, recorded_reg(last_msb + 1),
+        "the sector-select cycle must write the upper address lines");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(top,
+        recorded_data(last_msb + 1) & (CTRL_ADDRESS_LINE_16 | CTRL_ADDRESS_LINE_17 | CTRL_ADDRESS_LINE_18),
+        "A16-A18 of the sector-select cycle must come from the sector address");
+}
+
+void test_nor_unlock_sector_erase_drives_a16(void) {
+    assert_sector_select_latches(0x10000UL, 0x00, 0x00, CTRL_ADDRESS_LINE_16);
+}
+
+void test_nor_unlock_sector_erase_drives_a17(void) {
+    assert_sector_select_latches(0x20000UL, 0x00, 0x00, CTRL_ADDRESS_LINE_17);
+}
+
+void test_nor_unlock_sector_erase_drives_a18(void) {
+    assert_sector_select_latches(0x40000UL, 0x00, 0x00, CTRL_ADDRESS_LINE_18);
+}
+
+void test_nor_unlock_sector_erase_top_sector(void) {
+    assert_sector_select_latches(0x7F000UL, 0x00, 0xF0,
+        CTRL_ADDRESS_LINE_16 | CTRL_ADDRESS_LINE_17 | CTRL_ADDRESS_LINE_18);
+}
+
 int main(int argc, char** argv) {
     (void)argc; (void)argv;
     UNITY_BEGIN();
@@ -280,6 +344,11 @@ int main(int argc, char** argv) {
     RUN_TEST(test_nor_unlock_lock_status_no_vpp);
     RUN_TEST(test_nor_unlock_lock_status_raw_byte_fidelity);
     RUN_TEST(test_nor_unlock_lock_status_mode_bracketing);
+
+    RUN_TEST(test_nor_unlock_sector_erase_drives_a16);
+    RUN_TEST(test_nor_unlock_sector_erase_drives_a17);
+    RUN_TEST(test_nor_unlock_sector_erase_drives_a18);
+    RUN_TEST(test_nor_unlock_sector_erase_top_sector);
 
     return UNITY_END();
 }

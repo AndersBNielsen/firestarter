@@ -74,9 +74,8 @@ extern "C" {
      * per-sector map. x8 mode. Mode entry/exit is byte-identical to
      * FLASH_ENABLE_ID / FLASH_DISABLE_ID above, so there is no separate table.
      *
-     * Addressing: 0x0002 is under 64 KiB and is issued through
-     * handle->firestarter_get_data, NEVER fu_flash_fast_address -- that path has no
-     * A16+ bank register. */
+     * Addressing: 0x0002 is read through handle->firestarter_get_data, the
+     * full address path. */
     #define FLASH_NOR_UNLOCK_PROTECT_VERIFY_ADDR   0x0002UL
     #define FLASH_NOR_UNLOCK_PROTECT_UNPROTECTED   0x00
     #define FLASH_NOR_UNLOCK_PROTECT_PROTECTED     0x01
