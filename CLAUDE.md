@@ -28,7 +28,9 @@ Three workflows exist. Read the trigger before you decide that CI tested a commi
 | `py32f071.yml` | A push to any branch, and pull requests that touch ARM paths | Nothing. It is the ARM build gate and never continues on error. |
 
 **Only a version tag publishes.** A merge to `main` publishes nothing. `tools/release.sh X.Y.Z`
-checks the version and pushes the tag. The firmware releases independently of `firestarter_app`.
+checks the version and pushes the tag. A commit that carries the binary command frame cannot be
+tagged below `CF_MIN_FEATURE` (`3.3`): `release.sh` and `release.yml` both refuse it. The firmware
+releases independently of `firestarter_app`.
 
 **The version comes from the tag.** `version_from_git.py` (a `pre:` extra_script) defines `VERSION`
 from `git describe`: the tag itself on a tagged commit, `<next>.devN` between tags. With no release
@@ -301,13 +303,18 @@ writes `test/native/avr/test_command_decode/command_vectors.h`. The host test su
 frames.
 
 The memory payload carries every command parameter, so no value can stay from an earlier command.
+A command without a memory payload clears `protocol` and `pulse_delay`, so its `MSG_OK_READY`
+write budget is `0`.
 `0` still means "not sent": `pulse_delay` `0` selects the handler default, `region_end` `0` means
 the whole device, `chip_id` `0` skips the ID check. `0xFF` in a bus-line field means "no line".
 
 The decoder checks the full frame before it writes any handle field. The refusals are:
 
-- `MSG_ERR_BAD_FRAME` (`0xA0`): the frame is shorter than the header, or the magic or the version
-  is wrong. A JSON-era host gets this answer, because its first byte is `{`.
+- `MSG_ERR_BAD_FRAME` (`0xA0`): the frame is shorter than the header, or the magic is wrong. A
+  JSON-era host gets this answer, because its first byte is `{`.
+- `MSG_ERR_FRAME_VERSION` (`0xC3`), with `CF_VERSION` as its parameter: the magic is right and the
+  frame version is not `CF_VERSION`. The host compares the parameter with its own frame version to
+  find the older side. Every later frame version must answer a mismatch the same way.
 - `MSG_ERR_BAD_COMMAND` (`0xC2`), with a `CF_REFUSE_*` reason code: an undefined flag bit, a
   length that does not agree with the command, an address line outside bus lines 0–23, a duplicate
   address line, a gap in the address lines, a control or static-high line outside the bus, a read

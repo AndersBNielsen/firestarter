@@ -43,7 +43,7 @@ typedef struct {
     const char* name;
     const uint8_t* frame;
     uint16_t frame_len;
-    uint8_t refusal;  /* 0 = refused as a frame (MSG_ERR_BAD_FRAME) */
+    uint8_t refusal;  /* 0 = refused as a frame (MSG_ERR_BAD_FRAME), 0xFE = frame version (MSG_ERR_FRAME_VERSION) */
 } cf_refuse_vector_t;
 
 static const uint8_t cf_frame_fw_version[] = {0xF5, 0x01, 0x0D, 0x00, 0x00, 0x00, 0x00};
@@ -97,7 +97,7 @@ static const cf_accept_vector_t CF_ACCEPT_VECTORS[] = {
 
 static const cf_refuse_vector_t CF_REFUSE_VECTORS[] = {
     {"bad_magic_json", cf_frame_bad_magic_json, 6, 0},
-    {"bad_version", cf_frame_bad_version, 7, 0},
+    {"bad_version", cf_frame_bad_version, 7, 254},
     {"truncated_header", cf_frame_truncated_header, 5, 0},
     {"length_mismatch_simple", cf_frame_length_mismatch_simple, 8, 1},
     {"length_field_lies", cf_frame_length_field_lies, 7, 1},

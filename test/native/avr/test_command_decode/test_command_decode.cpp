@@ -20,6 +20,7 @@ extern "C" {
 #include "command_decoder.h"
 #include "memory.h"
 }
+#include "eprom_budget.h"
 #include "command_vectors.h"
 #include "firestarter.h"
 
@@ -181,6 +182,27 @@ void test_second_command_does_not_inherit_chip_or_bus_parameters(void) {
     TEST_ASSERT_EQUAL_UINT32((uint32_t)1 << 13, h.bus_config.static_high_mask);
 }
 
+/* MSG_OK_READY computes the write budget from protocol and pulse_delay for
+ * every command. A command without a memory payload must not report the
+ * budget of the chip before it. */
+void test_command_without_memory_payload_reports_no_write_budget(void) {
+    firestarter_handle_t h = {};
+    TEST_ASSERT_EQUAL_UINT8(CMD_DECODE_OK, load_vector(&h, "write_w27c512"));
+    configure_memory(&h);
+    TEST_ASSERT_NOT_EQUAL(0, eprom_block_budget_s(h.protocol, h.pulse_delay, 512));
+
+    TEST_ASSERT_EQUAL_UINT8(CMD_DECODE_OK, load_vector(&h, "fw_version"));
+    TEST_ASSERT_EQUAL_UINT8(0, h.protocol);
+    TEST_ASSERT_EQUAL_UINT32(0, h.pulse_delay);
+    TEST_ASSERT_EQUAL_UINT16(0, eprom_block_budget_s(h.protocol, h.pulse_delay, 512));
+
+    TEST_ASSERT_EQUAL_UINT8(CMD_DECODE_OK, load_vector(&h, "write_w27c512"));
+    configure_memory(&h);
+    TEST_ASSERT_EQUAL_UINT8(CMD_DECODE_OK, load_vector(&h, "config_read"));
+    TEST_ASSERT_EQUAL_UINT8(0, h.protocol);
+    TEST_ASSERT_EQUAL_UINT32(0, h.pulse_delay);
+}
+
 void test_decoder_writes_no_state_outside_the_command_parameters(void) {
     firestarter_handle_t h = {};
     h.operation_state = 7;
@@ -258,6 +280,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_one_byte_short_and_long_frames_are_refused);
     RUN_TEST(test_bus_derived_values);
     RUN_TEST(test_second_command_does_not_inherit_chip_or_bus_parameters);
+    RUN_TEST(test_command_without_memory_payload_reports_no_write_budget);
     RUN_TEST(test_decoder_writes_no_state_outside_the_command_parameters);
     RUN_TEST(test_eprom_default_pulse_is_for_the_current_chip);
     RUN_TEST(test_dev_address_needs_no_chip_fields);

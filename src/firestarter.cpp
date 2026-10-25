@@ -56,9 +56,13 @@ bool parse_command(firestarter_handle_t* handle) {
     uint8_t res = cmd_decode(handle);
     if (res == CMD_DECODE_BAD_FRAME) {
         // A JSON-era host lands here too: its first byte is '{', not CF_MAGIC.
-        handle->ctrl_flags = 0x80;
         LOG_DEBUG_ID_SUB_U8(DBG_BUF_VAL, handle->data_buffer[0]);
         LOG_ERROR_ID(MSG_ERR_BAD_FRAME);
+        return false;
+    }
+    if (res == CMD_DECODE_BAD_VERSION) {
+        // Send the version this firmware reads, so the host can tell which side is older.
+        LOG_ERROR_ID_U8(MSG_ERR_FRAME_VERSION, CF_VERSION);
         return false;
     }
     if (res != CMD_DECODE_OK) {

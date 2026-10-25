@@ -122,8 +122,11 @@ static uint8_t validate_config(const uint8_t* p) {
 uint8_t cmd_decode(firestarter_handle_t* handle) {
     const uint8_t* frame = (const uint8_t*)handle->data_buffer;
     uint32_t size = handle->data_size;
-    if (size < CF_HEADER_SIZE || frame[CF_OFF_MAGIC] != CF_MAGIC || frame[CF_OFF_VERSION] != CF_VERSION) {
+    if (size < CF_HEADER_SIZE || frame[CF_OFF_MAGIC] != CF_MAGIC) {
         return CMD_DECODE_BAD_FRAME;
+    }
+    if (frame[CF_OFF_VERSION] != CF_VERSION) {
+        return CMD_DECODE_BAD_VERSION;
     }
 
     handle->cmd = frame[CF_OFF_CMD];
@@ -146,9 +149,17 @@ uint8_t cmd_decode(firestarter_handle_t* handle) {
             return res;
         }
         apply_memory(handle, payload);
-    } else if (kind == CF_KIND_CONFIG) {
-        return validate_config(payload);
+        return CMD_DECODE_OK;
     }
+    if (kind == CF_KIND_CONFIG) {
+        uint8_t res = validate_config(payload);
+        if (res != CMD_DECODE_OK) {
+            return res;
+        }
+    }
+    // The write budget in MSG_OK_READY reads these two; no earlier chip may set it.
+    handle->protocol = 0;
+    handle->pulse_delay = 0;
     return CMD_DECODE_OK;
 }
 

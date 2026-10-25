@@ -19,7 +19,8 @@ follows the same three-prefix naming discipline:
 `firestarter/tests/` is invisible to PlatformIO. PlatformIO's unit-test discovery globs `test/`
 (the real native suites live at `test/native/avr/…`), and the default `[env]` source filter for the
 two native environments is explicitly
-`+<proms/> +<boards/rurp_serial_utils.cpp> +<json_parser.c> +<operation_utils.cpp>` — no path under
+`+<proms/> +<boards/rurp_serial_utils.cpp> +<command_decoder.c> +<operation_utils.cpp> +<rurp_voltage_math.c>
++<rurp_config_migrate.cpp>` — no path under
 `tests/` is named anywhere in `platformio.ini`. A `.cpp` fixture placed here therefore cannot reach
 any build, `pio run` or `pio test` alike, and `platformio.ini` stays completely untouched by this
 phase.

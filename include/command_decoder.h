@@ -18,7 +18,8 @@ extern "C" {
 
 /* cmd_decode results. Any other value is a CF_REFUSE_* code. */
 #define CMD_DECODE_OK 0
-#define CMD_DECODE_BAD_FRAME 0xFF
+#define CMD_DECODE_BAD_FRAME 0xFF   /* short frame or wrong magic */
+#define CMD_DECODE_BAD_VERSION 0xFE /* right magic, another frame version */
 
 /* cmd_apply_config result bits. */
 #define CMD_CFG_FIELD_CHANGED 1
@@ -28,8 +29,10 @@ extern "C" {
  *
  * Sets handle->cmd and handle->ctrl_flags from the header. A memory payload
  * is validated in full before any handle field is written, so a refused
- * frame leaves every command parameter as it was. A config payload is
- * validated here and applied by cmd_apply_config. */
+ * frame leaves every command parameter as it was. An accepted frame without
+ * a memory payload clears protocol and pulse_delay, so the MSG_OK_READY write
+ * budget is zero for it. A config payload is validated here and applied by
+ * cmd_apply_config. */
 uint8_t cmd_decode(firestarter_handle_t* handle);
 
 /* Write the config values the frame carries into `config`. Call only after

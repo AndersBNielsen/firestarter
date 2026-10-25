@@ -12,6 +12,7 @@
 #define CF_MAGIC 0xF5
 #define CF_VERSION 1
 #define CF_HEADER_SIZE 7
+#define CF_MIN_FEATURE "3.3"
 #define CF_OFF_MAGIC 0
 #define CF_OFF_VERSION 1
 #define CF_OFF_CMD 2
