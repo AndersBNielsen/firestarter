@@ -261,15 +261,14 @@ static void eeprom28c_wait_for_sdp_completion(firestarter_handle_t* handle) {
 //
 // The micros() reads bracket ONLY the emit call, so they do not perturb
 // inter-byte timing. The completion wait that follows a sequence stays at each
-// call site -- the unlock polls, the lock just delays t_WC, and
-// check_no_log_in_sdp_window.py needs the wait anchor inside the caller's body.
+// call site -- the unlock polls, the lock just delays t_WC, and the wait
+// anchor must stay inside the caller's body.
 //
 // The budget is derived from `length`, never a literal: 6 writes gives 600 us,
 // 3 gives 300 us. A bench run measured 572 us against the unlock's 600 us, so
 // this check is live, not latent.
 //
-// LOG_ calls belong here BY DESIGN. Do not add this function as a scanned
-// window in check_no_log_in_sdp_window.py -- the real timing window is
+// LOG_ calls belong here by design. The real timing window is
 // eeprom28c_emit_command_sequence's body.
 static void eeprom28c_emit_sdp_sequence_timed(firestarter_handle_t* handle, const byte_flip_t* sequence, size_t length,
                                                uint8_t emitted_msg_id, uint8_t done_us_msg_id) {
