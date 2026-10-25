@@ -107,6 +107,7 @@ bool parse_json(firestarter_handle_t* handle) {
             LOG_ERROR_ID(MSG_ERR_PARSE_CFG);
             return false;
         }
+#if RURP_HAS_BANDGAP_CAL
         if (res & JSON_CFG_CALIBRATE) {
             // Back-solve this MCU's bandgap from the operator's meter reading
             // of the supply pin. Refused, never clamped: a stored bandgap is
@@ -130,6 +131,7 @@ bool parse_json(firestarter_handle_t* handle) {
             config.bandgap_mv = measured;
             res |= JSON_CFG_FIELD_CHANGED;
         }
+#endif
         if (res & JSON_CFG_FIELD_CHANGED) {
             // Refused, never corrected: a corrected value would be acked as
             // if the operator's value had been stored. Boot-time migration
