@@ -4,18 +4,11 @@
  *
  * Permission is hereby granted under MIT license.
  *
- * rurp_pinout.h — canonical CTRL_* / PIN_* / RES_* / JMP_* alias substrate
- * for the silkscreen-label → code-alias migration.
+ * rurp_pinout.h — canonical CTRL_* / PIN_* / ADC_BAND_* / RURP_VPP_* definitions
+ * for the RURP shield.
  *
- * This header introduces ONLY the new canonical declarations. No
- * backward-compat alias block is included (no `#define <old_name>
- * <new_name>` lines). The old #defines in rurp_shield.h:25-94 remain in
- * place during Wave 1 and serve all existing call-sites; Waves 2 and 3
- * migrate call-sites individually and Wave 3's final task atomically
- * deletes the rurp_shield.h:25-94 block.
- *
- * The #ifndef HARDWARE_REVISION / #else / #endif structure mirrors
- * rurp_shield.h:24-94 VERBATIM (Pitfalls 1 + 2):
+ * The #ifndef HARDWARE_REVISION / #else / #endif structure below selects the
+ * control-register layout:
  *   - Legacy branch: CTRL_ADDRESS_LINE_16 == CTRL_VPP_VPE_DROP_ENABLE
  *     (macro-alias-as-macro, NOT duplicate hex)
  *   - HARDWARE_REVISION branch: CTRL_VPP_VPE_DROP_ENABLE == 0x100
@@ -109,8 +102,8 @@ extern "C" {
 /*
  * The VPP acceptance window, as a fraction of the row's target.
  *
- * Both bounds are sized against the MEASURED post-calibration uncertainty of
- * this instrument (v1.43, three boards, three shield revisions):
+ * Both bounds are sized against the measured post-calibration uncertainty of
+ * this instrument (three boards, three shield revisions):
  *
  *   divider assumed nominal, measured 7.1974 vs 7.1364   0.85 %
  *   divider spread across boards (rails-off 136..138)    0.73 %
@@ -138,12 +131,7 @@ extern "C" {
 #define RURP_VPP_HIGH_HEADROOM_FLOOR_MV 500
 #define RURP_VPP_LOW_TOLERANCE_PCT 5
 
-
-#define CTRL_ADDRESS_LINE_13          0x20  // reserved — no current call-site
-
 // ---- Section 3: Per-rev variants (CTRL_*_REV1 / CTRL_*_REV2) -----------
-// Mirrors rurp_shield.h:70-94 VERBATIM with suffix-family rename per
-// RESEARCH "State of the Art" deprecation table.
 
 #ifdef HARDWARE_REVISION
 // REV 1

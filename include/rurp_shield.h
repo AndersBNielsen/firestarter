@@ -20,8 +20,8 @@ extern "C" {
 #include "rurp_pinout.h"
 
 #ifdef HARDWARE_REVISION
-// Hardware-revision enum values (out of the alias-migration scope —
-// these are revision identifiers, not RURP-signal aliases).
+// Hardware-revision enum values. These are revision identifiers, not
+// RURP-signal aliases.
 #define REVISION_0 0
 #define REVISION_1 1
 #define REVISION_2_0 2
