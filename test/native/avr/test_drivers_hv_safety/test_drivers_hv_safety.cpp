@@ -8,6 +8,7 @@
  *   - An EPROM pulse wider than EPROM_PULSE_MAX_US is refused on every row.
  *   - The EPROM write body refuses a protocol with no parameter row before
  *     it asserts any route.
+ *   - The AT28C chip-ID read measures the regulator before it raises A9.
  */
 
 #include <Arduino.h>
@@ -143,10 +144,66 @@ void test_eprom_write_without_a_row_asserts_no_route(void) {
     TEST_ASSERT_TRUE(last_write_clears(EPROM_HV_ALL_OFF_MASK));
 }
 
+/* ---- AT28C chip-ID (0x0D) ---- */
+
+static firestarter_handle_t run_28c_chip_id(uint16_t vpp_target, uint16_t measured) {
+    set_mock_vpp_mv(measured);
+    s_read_value = 0x1E;  /* reads 0x1E1E */
+    firestarter_handle_t h = make_handle(0x0D, CMD_WRITE, vpp_target, FLAG_SKIP_SDP_UNLOCK);
+    h.chip_id = 0x1E1E;
+    configure_memory(&h);
+    wire_mocks(&h);
+    h.firestarter_operation_init(&h);
+    return h;
+}
+
+void test_28c_chip_id_high_vpp_never_raises_a9(void) {
+    firestarter_handle_t h = run_28c_chip_id(12000, 12700);
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);
+    TEST_ASSERT_EQUAL_INT(-1, first_assert_of(CTRL_VPP_A9_ENABLE));
+    TEST_ASSERT_TRUE(last_write_clears(CTRL_VPP_REGULATOR_ENABLE));
+}
+
+void test_28c_chip_id_bad_calibration_refused_before_hv(void) {
+    rurp_get_config()->r2 = 0;
+    firestarter_handle_t h = run_28c_chip_id(12000, 12000);
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);
+    TEST_ASSERT_EQUAL_INT(-1, first_assert_of(CTRL_VPP_REGULATOR_ENABLE | CTRL_VPP_A9_ENABLE));
+}
+
+void test_28c_chip_id_nominal_reads_id(void) {
+    firestarter_handle_t h = run_28c_chip_id(12000, 12000);
+    TEST_ASSERT_NOT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);
+    TEST_ASSERT_TRUE(first_assert_of(CTRL_VPP_A9_ENABLE) > first_assert_of(CTRL_VPP_REGULATOR_ENABLE));
+}
+
+void test_28c_chip_id_without_target_skips_measurement(void) {
+    firestarter_handle_t h = run_28c_chip_id(0, 20000);
+    TEST_ASSERT_NOT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);
+    TEST_ASSERT_TRUE(first_assert_of(CTRL_VPP_A9_ENABLE) >= 0);
+}
+
+#ifdef HARDWARE_REVISION
+/* Rev 0 cannot measure the rail, so the read goes ahead unmeasured. */
+void test_28c_chip_id_rev0_skips_measurement(void) {
+    set_mock_hw_rev(0);
+    firestarter_handle_t h = run_28c_chip_id(12000, 20000);
+    TEST_ASSERT_NOT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);
+    TEST_ASSERT_TRUE(first_assert_of(CTRL_VPP_A9_ENABLE) >= 0);
+}
+#endif
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_eprom_pulse_above_max_refused_on_every_row);
     RUN_TEST(test_eprom_pulse_at_max_accepted_on_uncapped_rows);
     RUN_TEST(test_eprom_write_without_a_row_asserts_no_route);
+    RUN_TEST(test_28c_chip_id_high_vpp_never_raises_a9);
+    RUN_TEST(test_28c_chip_id_bad_calibration_refused_before_hv);
+    RUN_TEST(test_28c_chip_id_nominal_reads_id);
+    RUN_TEST(test_28c_chip_id_without_target_skips_measurement);
+#ifdef HARDWARE_REVISION
+    RUN_TEST(test_28c_chip_id_rev0_skips_measurement);
+#endif
     return UNITY_END();
 }

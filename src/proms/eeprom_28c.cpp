@@ -15,6 +15,7 @@
 #include "memory_utils.h"
 #include "operation_utils.h"
 #include "rurp_pinout.h"
+#include "rurp_shield.h"
 
 /* Conservative page-size floor, used when the host delivers no page_size.
  * Do NOT replace it with a density-derived band table: AT28MC010 and AT28C010
@@ -154,11 +155,14 @@ void configure_eeprom28c(firestarter_handle_t* handle) {
 }
 
 // A9-12V chip-identification check for the AT28C EEPROM family.
-// Mirrors eprom_get_chip_id (eprom.cpp:186-197) for the read mechanism and
-// flash_intel_check_chip_id (flash_intel.cpp) for compare + response.
 // Read addresses are derived from mem_size: AT28C256 = 0x7FC0/0x7FC1,
 // AT28C64 = 0x1FC0/0x1FC1, etc. Caller-visible via response_code only;
-// no declaration in eeprom_28c.h (static — internal linkage only).
+// static, so no declaration in eeprom_28c.h.
+//
+// The regulator is asserted alone and measured before A9 is raised. A rail
+// outside the VPP window, or a calibration that cannot be evaluated, refuses
+// the read. Rev 0 cannot measure the rail, and a handle without a vpp_mv has no
+// target to compare with, so both skip the measurement.
 static void eeprom28c_check_chip_id(firestarter_handle_t* handle) {
     LOG_DEBUG_ID_SUB(DBG_CHECK_CHIP_ID_28C);
     // Underflow guard: mem_size < 64 would wrap mfr_addr to ~0xFFFFFFC0 and drive
@@ -174,8 +178,24 @@ static void eeprom28c_check_chip_id(firestarter_handle_t* handle) {
         }
         return;
     }
+    bool measure = handle->vpp_mv != 0;
+#ifdef HARDWARE_REVISION
+    if (rurp_get_hardware_revision() == REVISION_0) {
+        measure = false;
+    }
+#endif
+    if (measure && mem_util_refuse_bad_calibration(handle)) {
+        return;
+    }
     handle->firestarter_set_control_register(handle, CTRL_VPP_REGULATOR_ENABLE, 1);
     delay(50);
+    if (measure) {
+        mem_util_check_vpp_window(handle, rurp_read_voltage_mv());
+        if (handle->response_code == RESPONSE_CODE_ERROR) {
+            handle->firestarter_set_control_register(handle, CTRL_VPP_REGULATOR_ENABLE, 0);
+            return;
+        }
+    }
     handle->firestarter_set_control_register(handle, CTRL_VPP_A9_ENABLE, 1);
     delay(100);
     uint32_t mfr_addr = handle->mem_size - 64;  // 0x7FC0 (AT28C256) / 0x1FC0 (AT28C64) / ...
@@ -295,8 +315,8 @@ static void eeprom28c_sdp_lock_execute(firestarter_handle_t* handle) {
 
 // Six-byte SOFTWARE chip erase [Atmel AN "Software Chip Erase" Rev
 // 0544B-10/98]. Drives every byte to 0xFF; the device times the cycle
-// internally (t_EC), so no completion poll is permitted. SDP remains ENABLED
-// afterwards -- this does not lock or unlock as a side effect.
+// internally (t_EC), so no completion poll is permitted. The SDP-disable prefix
+// below leaves SDP disabled; this handler does not lock the chip again.
 //
 // NOT the datasheet's HARDWARE chip-erase mode, which drives 12V onto OE
 // (DIP28_28C256 pin 22). This handler energises no programming rail at all.
