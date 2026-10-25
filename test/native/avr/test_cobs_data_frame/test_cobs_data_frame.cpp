@@ -39,12 +39,14 @@ extern "C" {
 #include "rurp_shield.h"
 #include "firestarter.h"
 }
+#include "operation_utils.h"
 
 using namespace fakeit;
 
 /* Shared test state                                                         */
 
 static char data_buffer[DATA_BUFFER_SIZE];
+static firestarter_handle_t op_handle;
 static std::vector<uint8_t> rx_queue;
 static size_t rx_pos;
 
@@ -134,6 +136,7 @@ void setUp(void) {
     rx_pos = 0;
     millis_counter = 0;
     memset(data_buffer, 0, sizeof(data_buffer));
+    memset(&op_handle, 0, sizeof(op_handle));
 
     /* Stub flush() so ArduinoFake doesn't warn. */
     When(Method(ArduinoFake(Serial), flush)).AlwaysReturn();
@@ -273,6 +276,75 @@ void test_cobs_254_run_then_zero(void) {
     TEST_ASSERT_EQUAL_MEMORY(payload, data_buffer, sizeof(payload));
 }
 
+/* op_get_message: a 'D' that does not start "DONE" (henols/firestarter#129) */
+
+static void queue_text(const char* text) {
+    rx_queue.insert(rx_queue.end(), text, text + strlen(text));
+}
+
+static void queue_data_frame(const uint8_t* payload, size_t len) {
+    rx_queue.push_back('#');
+    build_cobs_frame_bytes(payload, len, rx_queue);
+}
+
+void test_op_message_done(void) {
+    queue_text("DONE");
+    setup_serial_read_mock(rx_queue, rx_pos);
+    TEST_ASSERT_EQUAL_INT(OP_MSG_DONE, op_get_message(&op_handle));
+    TEST_ASSERT_EQUAL_size_t(rx_queue.size(), rx_pos);
+}
+
+void test_op_message_plain_data_frame(void) {
+    const uint8_t payload[] = { 0x44, 0x4F, 0x4E, 0x45 };  /* "DONE" as data */
+    queue_data_frame(payload, sizeof(payload));
+    setup_serial_read_mock(rx_queue, rx_pos);
+    TEST_ASSERT_EQUAL_INT(OP_MSG_DATA, op_get_message(&op_handle));
+    TEST_ASSERT_EQUAL_UINT32(sizeof(payload), op_handle.data_size);
+    TEST_ASSERT_EQUAL_MEMORY(payload, op_handle.data_buffer, sizeof(payload));
+}
+
+void test_op_message_invalid_done_prefix_keeps_the_next_frame(void) {
+    const uint8_t payload[] = { 0x11, 0x22, 0x33 };
+    /* Before the fix the four bytes after 'D' were read as a block, so
+     * "D" + "#..." swallowed the '#' and the frame start. */
+    queue_text("D");
+    queue_data_frame(payload, sizeof(payload));
+    setup_serial_read_mock(rx_queue, rx_pos);
+    TEST_ASSERT_EQUAL_INT(OP_MSG_DATA, op_get_message(&op_handle));
+    TEST_ASSERT_EQUAL_UINT32(sizeof(payload), op_handle.data_size);
+    TEST_ASSERT_EQUAL_MEMORY(payload, op_handle.data_buffer, sizeof(payload));
+}
+
+void test_op_message_partial_done_keeps_the_next_frame(void) {
+    const uint8_t payload[] = { 0x55, 0x66 };
+    queue_text("DON");
+    queue_data_frame(payload, sizeof(payload));
+    queue_text("Dxx");
+    queue_data_frame(payload, sizeof(payload));
+    setup_serial_read_mock(rx_queue, rx_pos);
+    TEST_ASSERT_EQUAL_INT(OP_MSG_DATA, op_get_message(&op_handle));
+    TEST_ASSERT_EQUAL_MEMORY(payload, op_handle.data_buffer, sizeof(payload));
+    TEST_ASSERT_EQUAL_INT(OP_MSG_DATA, op_get_message(&op_handle));
+    TEST_ASSERT_EQUAL_MEMORY(payload, op_handle.data_buffer, sizeof(payload));
+    TEST_ASSERT_EQUAL_size_t(rx_queue.size(), rx_pos);
+}
+
+void test_op_message_invalid_done_prefix_keeps_a_following_ack(void) {
+    queue_text("DX");
+    queue_text("OK");
+    setup_serial_read_mock(rx_queue, rx_pos);
+    TEST_ASSERT_EQUAL_INT(OP_MSG_ACK, op_get_message(&op_handle));
+}
+
+void test_op_message_fragmented_done(void) {
+    queue_text("DO");
+    setup_serial_read_mock(rx_queue, rx_pos);
+    TEST_ASSERT_EQUAL_INT(OP_MSG_INCOMPLETE, op_get_message(&op_handle));
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(0, rx_pos, "a partial DONE must not be consumed");
+    queue_text("NE");
+    TEST_ASSERT_EQUAL_INT(OP_MSG_DONE, op_get_message(&op_handle));
+}
+
 /* main                                                                      */
 int main(int argc, char** argv) {
     (void)argc;
@@ -283,6 +355,12 @@ int main(int argc, char** argv) {
     RUN_TEST(test_cobs_resync_bounded);
     RUN_TEST(test_cobs_all_zero_payload);
     RUN_TEST(test_cobs_254_run_then_zero);
+    RUN_TEST(test_op_message_done);
+    RUN_TEST(test_op_message_plain_data_frame);
+    RUN_TEST(test_op_message_invalid_done_prefix_keeps_the_next_frame);
+    RUN_TEST(test_op_message_partial_done_keeps_the_next_frame);
+    RUN_TEST(test_op_message_invalid_done_prefix_keeps_a_following_ack);
+    RUN_TEST(test_op_message_fragmented_done);
 
     return UNITY_END();
 }

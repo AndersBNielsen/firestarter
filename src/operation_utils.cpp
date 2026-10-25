@@ -129,18 +129,25 @@ op_message_type op_get_message(firestarter_handle_t* handle) {
                 // Not "OK", 'O' is consumed. Loop will treat next char as junk.
                 break;
 
-            case 'D':  // Potential "DONE"
+            case 'D': {  // Potential "DONE"
                 if (rurp_communication_available() < 4) {
                     return OP_MSG_INCOMPLETE;
                 }
-                char done_buf[4];
-                rurp_communication_read_bytes(done_buf, 4);
-                if (strncmp_P(done_buf, PSTR("DONE"), 4) == 0) {
+                // Consume a byte only while it continues "DONE". The first
+                // byte that does not match stays in the buffer, so a '#'
+                // data frame or an "OK" after a stray 'D' is still read.
+                static const char done[] PROGMEM = "DONE";
+                uint8_t matched = 0;
+                while (matched < 4 &&
+                       rurp_communication_peak() == (int)pgm_read_byte(&done[matched])) {
+                    rurp_communication_read();
+                    matched++;
+                }
+                if (matched == 4) {
                     return OP_MSG_DONE;
                 }
-                // Not "DONE", but 4 bytes are already consumed — this can
-                // eat the start of a following message.
                 break;
+            }
 
             case '#': {  // Data packet
                 rurp_communication_read();  // consume '#'
