@@ -98,7 +98,47 @@ extern "C" {
     #define FLASH_5V_PAGE_BOOT_BLOCK_LOCKED        0xFE
 
     void flash_util_byte_flipping(firestarter_handle_t* handle, const byte_flip_t* byte_flips, size_t size);
-    void flash_util_verify_operation(firestarter_handle_t* handle, uint8_t expected_data);
+
+    /* Data# polling bit. While an embedded program or erase algorithm runs,
+     * DQ7 reads the complement of the byte being written (0 during an erase). */
+    #define FLASH_DQ7 0x80
+
+    /* Bounds for the waits below. A byte program takes microseconds. A chip
+     * erase on the AMD-style parts takes seconds. The erase bound stays under
+     * the host's 10 s wait for a phase response, so the firmware reports the
+     * failure before the host gives up. */
+    #define FLASH_PROGRAM_TIMEOUT_MS 150U
+    #define FLASH_ERASE_TIMEOUT_MS 9000U
+
+    /* Waits for an embedded program or erase algorithm to end, by Data#
+     * polling DQ7 at `address` (pass 0xFF as `expected` for an erase). The
+     * algorithm has ended when DQ7 equals expected's DQ7 on two consecutive
+     * reads, because DQ7 can change in the same read as the other outputs.
+     * Returns false when timeout_ms passes first; the bound is rollover-safe.
+     *
+     * Reads go through handle->firestarter_get_data, so the upper address
+     * lines, the bus remap and the read level of the WE line all apply.
+     *
+     * DQ5 ("exceeded timing limits") is not read. Only the AMD-style parts
+     * define it; the SST, Winbond and Atmel parts on the same protocols list
+     * DQ7 and DQ6 as their only status bits and leave DQ5 undefined while
+     * busy, so a DQ5 test could fail a healthy part. A part that stops with
+     * DQ5 set keeps DQ7 complemented, so the time bound still ends the wait. */
+    bool flash_util_wait_ready(firestarter_handle_t* handle, uint32_t address, uint8_t expected, uint16_t timeout_ms);
+
+    /* The two failure-reporting forms of the wait. On a failure each sets
+     * RESPONSE_CODE_ERROR and sends AA/55/F0, which returns an AMD-style part
+     * to read mode and also exits SST Software ID mode.
+     *
+     * flash_util_wait_program: MSG_ERR_OP_TIMEOUT when the program does not
+     * end within FLASH_PROGRAM_TIMEOUT_MS.
+     *
+     * flash_util_wait_erase: MSG_ERR_OP_TIMEOUT when the erase does not end
+     * within FLASH_ERASE_TIMEOUT_MS, and MSG_ERR_NOT_BLANK with the address
+     * and the byte read when it ends but `address` does not read 0xFF -- a
+     * protected sector, a locked boot block, or an erase the part refused. */
+    bool flash_util_wait_program(firestarter_handle_t* handle, uint32_t address, uint8_t expected);
+    bool flash_util_wait_erase(firestarter_handle_t* handle, uint32_t address);
 
     /* Shared AMD/JEDEC chip-ID read and mismatch check.
      * Used by flash_nor_unlock and flash_5v_page to avoid duplicating the

@@ -24,10 +24,6 @@ uint16_t flash_nor_unlock_get_chip_id(firestarter_handle_t* handle);
 
 void flash_nor_unlock_generic_init(firestarter_handle_t* handle);
 
-// Worst-case erase time for older flash chips can be up to 100ms.
-// Add a 5ms buffer for safety.
-const int FLASH_ERASE_DELAY_MS = 105;
-
 void configure_flash_nor_unlock(firestarter_handle_t* handle) {
     LOG_DEBUG_ID_SUB(DBG_CONFIGURING_FLASH);
     handle->firestarter_operation_init = flash_nor_unlock_generic_init;
@@ -80,7 +76,6 @@ void flash_nor_unlock_write_init(firestarter_handle_t* handle) {
         if (is_flag_set(FLAG_CAN_ERASE)) {
             if (!is_flag_set(FLAG_SKIP_ERASE)) {
                 flash_nor_unlock_erase_execute(handle);
-                delay(FLASH_ERASE_DELAY_MS);
             }
             else {
                 LOG_DEBUG_ID_SUB(DBG_SKIPPING_ERASE_MEMORY);
@@ -92,16 +87,19 @@ void flash_nor_unlock_write_init(firestarter_handle_t* handle) {
 
 void flash_nor_unlock_write_execute(firestarter_handle_t* handle) {
     for (uint32_t i = 0; i < handle->data_size; i++) {
+        uint32_t address = handle->address + i;
         flash_execute_command(FLASH_ENABLE_WRITE);
-        handle->firestarter_set_data(handle, handle->address + i, handle->data_buffer[i]);
-
-        flash_util_verify_operation(handle, handle->data_buffer[i]);
-        if (handle->response_code == RESPONSE_CODE_ERROR) {
+        handle->firestarter_set_data(handle, address, handle->data_buffer[i]);
+        if (!flash_util_wait_program(handle, address, handle->data_buffer[i])) {
             return;
         }
     }
 }
 
+// Starts the erase and waits for the part to finish it. The wait polls the
+// erased address itself: the sector address, or 0 for a chip erase. A write
+// must not start on a part that is still erasing, because the part ignores
+// every command until the erase ends.
 void flash_nor_unlock_erase_execute(firestarter_handle_t* handle) {
     if (handle->address != 0) {
         LOG_DEBUG_ID_SUB(DBG_SECTOR_ERASE);
@@ -110,6 +108,7 @@ void flash_nor_unlock_erase_execute(firestarter_handle_t* handle) {
         LOG_DEBUG_ID_SUB(DBG_CHIP_ERASE);
         flash_execute_command(FLASH_ERASE);
     }
+    flash_util_wait_erase(handle, handle->address);
 }
 
 void flash_nor_unlock_sector_erase(firestarter_handle_t* handle, uint32_t sector_address) {

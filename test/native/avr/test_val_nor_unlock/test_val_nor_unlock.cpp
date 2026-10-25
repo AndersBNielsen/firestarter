@@ -69,6 +69,25 @@ static uint8_t stub_get_data_return_fixed(firestarter_handle_t* handle, uint32_t
     return s_stub_raw_value;
 }
 
+/* A part that answers every status read with s_status_value, and counts the
+ * reads and the address of the last one. */
+static uint8_t s_status_value = 0xFF;
+static int s_status_reads = 0;
+static uint32_t s_status_address = 0;
+static uint8_t stub_status(firestarter_handle_t* handle, uint32_t address) {
+    (void)handle;
+    s_status_reads++;
+    s_status_address = address;
+    return s_status_value;
+}
+
+/* The first frame's message id: 4 magic + 2 length bytes come before it. */
+static uint8_t first_frame_id(void) {
+    return s_wire_bytes.size() > 6 ? s_wire_bytes[6] : 0;
+}
+
+static uint32_t s_millis = 0;
+
 void setUp(void) {
     ArduinoFakeReset();
     s_wire_bytes.clear();
@@ -80,6 +99,11 @@ void setUp(void) {
     When(OverloadedMethod(ArduinoFake(Serial), write, size_t(const uint8_t*, size_t))).AlwaysReturn(1);
     When(Method(ArduinoFake(Serial), flush)).AlwaysReturn();
     When(Method(ArduinoFake(), delayMicroseconds)).AlwaysReturn();
+    s_millis = 0;
+    When(Method(ArduinoFake(), millis)).AlwaysDo([]() -> unsigned long { return s_millis++; });
+    s_status_value = 0xFF;
+    s_status_reads = 0;
+    s_status_address = 0xFFFFFFFFUL;
     clear_bus_recording();
 }
 
@@ -291,6 +315,7 @@ static void assert_sector_select_latches(uint32_t sector, uint8_t lsb, uint8_t m
     firestarter_handle_t h = make_handle(CMD_ERASE);
     h.address = sector;
     configure_memory(&h);
+    h.firestarter_get_data = stub_status; /* erased at once; records no register */
     clear_bus_recording();
 
     h.firestarter_operation_main(&h);
@@ -330,6 +355,143 @@ void test_nor_unlock_sector_erase_top_sector(void) {
         CTRL_ADDRESS_LINE_16 | CTRL_ADDRESS_LINE_17 | CTRL_ADDRESS_LINE_18);
 }
 
+/* Issue #122: an erase waits for the part, and reports the outcome. */
+void test_nor_unlock_chip_erase_waits_at_address_zero(void) {
+    firestarter_handle_t h = make_handle(CMD_ERASE);
+    configure_memory(&h);
+    h.firestarter_get_data = stub_status;
+
+    h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_OK, h.response_code);
+    TEST_ASSERT_EQUAL_MESSAGE(3, s_status_reads,
+        "two matching DQ7 reads end the wait, and one more read checks the byte is erased");
+    TEST_ASSERT_EQUAL_HEX32(0, s_status_address);
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(0, s_wire_bytes.size(), "a good erase sends no frame");
+}
+
+void test_nor_unlock_sector_erase_waits_at_the_sector(void) {
+    firestarter_handle_t h = make_handle(CMD_ERASE);
+    h.address = 0x30000UL;
+    configure_memory(&h);
+    h.firestarter_get_data = stub_status;
+
+    h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_OK, h.response_code);
+    TEST_ASSERT_EQUAL_HEX32(0x30000UL, s_status_address);
+}
+
+void test_nor_unlock_erase_that_never_ends_times_out(void) {
+    firestarter_handle_t h = make_handle(CMD_ERASE);
+    configure_memory(&h);
+    h.firestarter_get_data = stub_status;
+    s_status_value = 0x00; /* DQ7 low: still erasing */
+
+    h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);
+    TEST_ASSERT_EQUAL_HEX8(MSG_ERR_OP_TIMEOUT, first_frame_id());
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT32(FLASH_ERASE_TIMEOUT_MS, s_millis);
+}
+
+void test_nor_unlock_erase_that_leaves_data_is_not_blank(void) {
+    firestarter_handle_t h = make_handle(CMD_ERASE);
+    h.address = 0x12000UL;
+    configure_memory(&h);
+    h.firestarter_get_data = stub_status;
+    s_status_value = 0xA5; /* DQ7 high, so the wait ends, but the byte is not erased */
+
+    h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);
+    TEST_ASSERT_EQUAL_HEX8(MSG_ERR_NOT_BLANK, first_frame_id());
+    /* [u24 address][u8 value] */
+    TEST_ASSERT_TRUE(s_wire_bytes.size() > 10);
+    TEST_ASSERT_EQUAL_HEX8(0x01, s_wire_bytes[7]);
+    TEST_ASSERT_EQUAL_HEX8(0x20, s_wire_bytes[8]);
+    TEST_ASSERT_EQUAL_HEX8(0x00, s_wire_bytes[9]);
+    TEST_ASSERT_EQUAL_HEX8(0xA5, s_wire_bytes[10]);
+}
+
+/* The failure path returns the part to read mode with AA/55/F0. */
+void test_nor_unlock_failed_erase_resets_the_part(void) {
+    firestarter_handle_t h = make_handle(CMD_ERASE);
+    configure_memory(&h);
+    h.firestarter_get_data = stub_status;
+    s_status_value = 0x00;
+    clear_bus_recording();
+
+    h.firestarter_operation_main(&h);
+
+    uint8_t msb[32];
+    int n = 0;
+    for (int i = 0; i < bus_recording_count() && n < 32; i++) {
+        if (recorded_reg(i) == MOST_SIGNIFICANT_BYTE) {
+            msb[n++] = recorded_data(i);
+        }
+    }
+    TEST_ASSERT_EQUAL_MESSAGE(9, n, "six erase cycles, then three reset cycles");
+    TEST_ASSERT_EQUAL_HEX8(0x55, msb[6]);
+    TEST_ASSERT_EQUAL_HEX8(0x2A, msb[7]);
+    TEST_ASSERT_EQUAL_HEX8(0x55, msb[8]);
+}
+
+void test_nor_unlock_write_init_erases_and_waits(void) {
+    firestarter_handle_t h = make_handle(CMD_WRITE);
+    h.ctrl_flags = FLAG_CAN_ERASE;
+    configure_memory(&h);
+    h.firestarter_get_data = stub_status;
+
+    h.firestarter_operation_init(&h);
+
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_OK, h.response_code);
+    TEST_ASSERT_EQUAL_MESSAGE(3, s_status_reads, "write init must wait for its chip erase");
+}
+
+/* A part that is still programming answers with DQ7 complemented, then the
+ * true byte. */
+static int s_program_busy_reads = 0;
+static uint8_t stub_program_status(firestarter_handle_t* handle, uint32_t address) {
+    s_status_reads++;
+    s_status_address = address;
+    if (s_program_busy_reads > 0) {
+        s_program_busy_reads--;
+        return (uint8_t)(handle->data_buffer[0] ^ 0x80);
+    }
+    return (uint8_t)handle->data_buffer[0];
+}
+
+void test_nor_unlock_program_waits_at_the_written_address(void) {
+    firestarter_handle_t h = make_handle(CMD_WRITE);
+    h.address = 0x4321UL;
+    h.data_size = 1;
+    h.data_buffer[0] = (char)0x3C;
+    configure_memory(&h);
+    h.firestarter_get_data = stub_program_status;
+    s_program_busy_reads = 5;
+
+    h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_OK, h.response_code);
+    TEST_ASSERT_EQUAL_MESSAGE(7, s_status_reads, "five busy reads, then two matching reads");
+    TEST_ASSERT_EQUAL_HEX32(0x4321UL, s_status_address);
+}
+
+void test_nor_unlock_program_that_never_ends_times_out(void) {
+    firestarter_handle_t h = make_handle(CMD_WRITE);
+    h.data_size = 1;
+    h.data_buffer[0] = (char)0x3C;
+    configure_memory(&h);
+    h.firestarter_get_data = stub_program_status;
+    s_program_busy_reads = 1000000;
+
+    h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);
+    TEST_ASSERT_EQUAL_HEX8(MSG_ERR_OP_TIMEOUT, first_frame_id());
+}
+
 int main(int argc, char** argv) {
     (void)argc; (void)argv;
     UNITY_BEGIN();
@@ -349,6 +511,15 @@ int main(int argc, char** argv) {
     RUN_TEST(test_nor_unlock_sector_erase_drives_a17);
     RUN_TEST(test_nor_unlock_sector_erase_drives_a18);
     RUN_TEST(test_nor_unlock_sector_erase_top_sector);
+
+    RUN_TEST(test_nor_unlock_chip_erase_waits_at_address_zero);
+    RUN_TEST(test_nor_unlock_sector_erase_waits_at_the_sector);
+    RUN_TEST(test_nor_unlock_erase_that_never_ends_times_out);
+    RUN_TEST(test_nor_unlock_erase_that_leaves_data_is_not_blank);
+    RUN_TEST(test_nor_unlock_failed_erase_resets_the_part);
+    RUN_TEST(test_nor_unlock_write_init_erases_and_waits);
+    RUN_TEST(test_nor_unlock_program_waits_at_the_written_address);
+    RUN_TEST(test_nor_unlock_program_that_never_ends_times_out);
 
     return UNITY_END();
 }
