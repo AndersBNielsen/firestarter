@@ -10,8 +10,8 @@ Firestarter: the CLI installs the firmware. Refer to the
 
 | Board | PlatformIO env | MCU | Notes |
 |---|---|---|---|
-| `uno` | `uno` | ATmega328P | Arduino Uno R3 with the RURP shield |
-| `uno328pb` | `uno328pb` | ATmega328PB | Uno-shaped board with an ATmega328PB, pin-compatible with `uno` |
+| `uno` | `uno` | ATmega328P | Arduino Uno R3 with the RURP shield, 1024-byte data buffer |
+| `uno328pb` | `uno328pb` | ATmega328PB | Uno-shaped board with an ATmega328PB, pin-compatible with `uno`, 1024-byte data buffer |
 | `leonardo` | `leonardo` | ATmega32U4 | Arduino Leonardo with the RURP shield, 1536-byte data buffer |
 | `py32f071` | CMake | PY32F071 | Beta only. Refer to [platform/py32f071/README.md](platform/py32f071/README.md) |
 

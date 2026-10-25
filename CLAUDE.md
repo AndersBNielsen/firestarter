@@ -335,7 +335,7 @@ is one byte blob. Its length tells the host which fields it contains:
 `src/hardware_operations.cpp` and `src/dev_tools.cpp` send a short form that holds `buffer_size`
 only.
 
-- **`buffer_size`** — `DATA_BUFFER_SIZE`, 2 bytes. It is 512 by default and 1536 on `leonardo`. The
+- **`buffer_size`** — `DATA_BUFFER_SIZE`, 2 bytes. It is 1024 on `uno` and `uno328pb`, 1536 on `leonardo`, and 512 by default. The
   host sizes its data chunks from this value.
 - **`hw_revision` and `ver`** — the hardware-revision byte, then the firmware-version string. The
   string length changes with the board name. **Read `ver` at the offset that `ver_len` gives, never
