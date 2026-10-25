@@ -7,6 +7,7 @@ Compile and execute the production VPP seam under supported board macro sets; as
 """
 
 
+import configparser
 import os
 import re
 import shutil
@@ -27,38 +28,49 @@ _PY32_BOARD_HEADER = _INCLUDE / "boards" / "py32f071_rurp_shield.h"
 _EXPECTED_MODE_MANUAL = 0
 _EXPECTED_RESULT_MANUAL_REQUIRED = 1
 
-_BOARD_MACRO_SETS = [
-    pytest.param(
-        ("__AVR__", "ARDUINO_AVR_UNO", 'RURP_BOARD_NAME="uno"', "SERIAL_ON_IO"),
-        id="uno",
-    ),
-    pytest.param(
-        (
-            "__AVR__",
-            "ARDUINO_AVR_LEONARDO",
-            'RURP_BOARD_NAME="leonardo"',
-            "DATA_BUFFER_SIZE=1024",
-        ),
-        id="leonardo",
-    ),
-    pytest.param(
-        (
-            "__AVR__",
-            "ARDUINO_AVR_ATmega328PB",
-            'RURP_BOARD_NAME="uno328pb"',
-            "SERIAL_ON_IO",
-        ),
-        id="uno328pb",
-    ),
-    pytest.param(
-        (
-            "RURP_PLATFORM_PY32F071=1",
-            "RURP_HAS_VPP_DAC=0",
-            'RURP_BOARD_NAME="py32f071"',
-        ),
-        id="py32f071",
-    ),
-]
+def _expand(config, section, value):
+    """Expand PlatformIO `${section.option}` references; `this` is the
+    section being read."""
+    def substitute(match):
+        source = section if match.group(1) == "this" else match.group(1)
+        return _expand(config, source, config.get(source, match.group(2)))
+
+    return re.sub(r"\$\{(\w+)\.(\w+)\}", substitute, value)
+
+
+def _platformio_macro_sets():
+    """One macro set per AVR env in platformio.ini: its -D flags as
+    PlatformIO passes them, plus `__AVR__`, which the AVR toolchain itself
+    defines."""
+    config = configparser.ConfigParser(interpolation=None, inline_comment_prefixes=(";",))
+    config.read(_PLATFORMIO_INI)
+    sets = []
+    for section in config.sections():
+        if not section.startswith("env:") or config.get(section, "platform", fallback="") != "atmelavr":
+            continue
+        flags = _expand(config, section, config.get(section, "build_flags", fallback=""))
+        defines = [d.replace('\\"', '"') for d in re.findall(r"-D\s*(\S+)", flags)]
+        sets.append(pytest.param(("__AVR__", *defines), id=section[len("env:"):]))
+    return sets
+
+
+def _py32_macro_set():
+    """The definitions the py32 CMake build passes to the firmware target."""
+    match = re.search(
+        r"target_compile_definitions\(\s*\$\{TARGET_NAME\}\s*PRIVATE(.*?)\)",
+        _PY32_CMAKE.read_text(),
+        re.S,
+    )
+    assert match, f"no target_compile_definitions block in {_PY32_CMAKE}"
+    return pytest.param(tuple(match.group(1).split()), id="py32f071")
+
+
+_BOARD_MACRO_SETS = [*_platformio_macro_sets(), _py32_macro_set()]
+
+
+def test_every_real_build_has_a_macro_set():
+    ids = [param.id for param in _BOARD_MACRO_SETS]
+    assert len(ids) >= 2 and "py32f071" in ids, ids
 
 
 def _resolve_compiler():

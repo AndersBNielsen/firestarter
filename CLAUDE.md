@@ -271,9 +271,7 @@ The six writes are inline, not a `.data` table, so the erase uses 0 bytes of RAM
 exists.
 
 **Do not implement the datasheet *hardware* Chip Erase mode.** It needs **12V on OE, pin 22** of
-`DIP28_28C256`, and that voltage damages a 5V part. `scripts/check_erase_no_vpp.py` scans the body
-of `eeprom28c_erase_execute` and fails on any control-register high-voltage write. That script is a
-legacy source scan, not a guard. Do not add that 12V path from the datasheet. For the same reason, algorithm 5
+`DIP28_28C256`, and that voltage damages a 5V part. Do not add that 12V path from the datasheet. For the same reason, algorithm 5
 never gets `FLAG_CAN_ERASE`. No firmware function implements the 12V path.
 
 `write` does **no blank check** on this protocol. Each page write erases the page internally. The
@@ -455,5 +453,6 @@ only. It never checks register side effects, so no-op stubs are sufficient for i
 3. Add `-I test/native/avr/<dirname>` to `shared_build_flags` in `[native_base]`.
 4. Add stubs to the suite's `host_stubs.cpp` only if the suite calls more `rurp_*` functions.
 
-Both lists are in `[native_base]`, so one entry in each list adds the suite to both native
-environments. The suite then also runs in `native_nodevtools`, which runs on every CI push.
+Both lists are in `[native_base]`, so one entry in each list adds the suite to `[env:native]`.
+`[env:native_nodevtools]` has its own `test_filter` with only the suites whose behaviour depends on
+`DEV_TOOLS`. Add a suite there too only if it does.

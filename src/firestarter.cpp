@@ -86,8 +86,12 @@ bool parse_command(firestarter_handle_t* handle) {
         LOG_DEBUG_ID_SUB_U8(DBG_FLAG_CHIP_EN, is_flag_set(FLAG_CHIP_ENABLE));
 #endif
     } else if (handle->cmd == CMD_CONFIG) {
-        rurp_configuration_t* config = rurp_get_config();
-        uint8_t cfg = cmd_apply_config(handle, config);
+        // Parse into a copy. The live configuration changes only after every
+        // field has parsed, any calibration has back-solved and the result
+        // is valid, so a refused command leaves nothing behind in RAM.
+        rurp_configuration_t config = *rurp_get_config();
+        uint8_t cfg = cmd_apply_config(handle, &config);
+#if RURP_HAS_BANDGAP_CAL
         if (cfg & CMD_CFG_CALIBRATE) {
             // Back-solve this MCU's bandgap from the operator's meter reading
             // of the supply pin. Refused, never clamped: a stored bandgap is
@@ -108,15 +112,19 @@ bool parse_command(firestarter_handle_t* handle) {
                 LOG_ERROR_ID(MSG_ERR_PARSE_CFG);
                 return false;
             }
-            config->bandgap_mv = measured;
+            config.bandgap_mv = measured;
             cfg |= CMD_CFG_FIELD_CHANGED;
         }
+#endif
         if (cfg & CMD_CFG_FIELD_CHANGED) {
-            // Range-check whatever was just written before it is stored, so a
-            // bad r1/r2/bandgap never reaches the conversion. Refuses by
-            // correcting to the default, which is the same policy boot applies.
-            (void)rurp_config_migrate(config);
-            rurp_save_config(config);
+            // Refused, never corrected: a corrected value would be acked as
+            // if the operator's value had been stored. Boot-time migration
+            // still corrects, because no operator is there to tell.
+            if (!rurp_config_commit(rurp_get_config(), &config)) {
+                LOG_ERROR_ID(MSG_ERR_PARSE_CFG);
+                return false;
+            }
+            rurp_save_config(rurp_get_config());
         }
     }
     return true;

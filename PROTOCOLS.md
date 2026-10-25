@@ -163,8 +163,7 @@ blank check before a write, because the chip erases each page when it writes it.
 
 > [!WARNING]
 > Do not add the datasheet hardware chip-erase mode. It puts 12 V on OE, pin 22 of a 28-pin part,
-> and that voltage can damage a 5 V EEPROM. `scripts/check_erase_no_vpp.py` fails when the erase
-> function writes a high-voltage control-register bit.
+> and that voltage can damage a 5 V EEPROM.
 
 **SDP commands.** `CMD_SDP_UNLOCK` sends the SDP disable. `CMD_SDP_LOCK` sends
 `5555<-AA, 2AAA<-55, 5555<-A0` and waits 10 ms.

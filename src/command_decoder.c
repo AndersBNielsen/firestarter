@@ -7,6 +7,8 @@
 
 #include "command_decoder.h"
 
+#include "rurp_voltage_math.h"
+
 #include <string.h>
 
 _Static_assert(CF_ADDRESS_LINES == ADDRESS_LINES_SIZE,
@@ -113,6 +115,12 @@ static uint8_t validate_config(const uint8_t* p) {
     }
 #ifndef HARDWARE_REVISION
     if (present & CF_CONFIG_PRESENT_REV) {
+        return CF_REFUSE_CONFIG_FIELD;
+    }
+#endif
+#if !RURP_HAS_BANDGAP_CAL
+    // This port never reads the stored bandgap, so it takes no calibration.
+    if (present & (CF_CONFIG_PRESENT_BG | CF_CONFIG_PRESENT_VCC)) {
         return CF_REFUSE_CONFIG_FIELD;
     }
 #endif

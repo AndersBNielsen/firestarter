@@ -233,12 +233,17 @@ void mem_util_check_vpp_window(firestarter_handle_t* handle, uint16_t vpp_mv) {
 }
 
 void mem_util_warn_if_uncalibrated(firestarter_handle_t* handle) {
+#if RURP_HAS_BANDGAP_CAL
     rurp_configuration_t* cfg = rurp_get_config();
     if (cfg->bandgap_mv != (uint16_t)RURP_BANDGAP_NOMINAL_MV) {
         return;
     }
     LOG_WARN_ID(MSG_WARN_NOT_CALIBRATED);
     handle->response_code = RESPONSE_CODE_WARNING;
+#else
+    // No calibration exists to do, so there is nothing to warn about.
+    (void)handle;
+#endif
 }
 
 bool mem_util_refuse_bad_calibration(firestarter_handle_t* handle) {
