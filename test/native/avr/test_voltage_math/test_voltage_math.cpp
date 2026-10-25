@@ -7,17 +7,12 @@
  * Native coverage for the ADC-count-to-millivolt arithmetic
  * (src/rurp_voltage_math.c).
  *
- * This suite REPLACES tests/test_voltage_reformulation_oracle.py, which
- * proved the same properties against a Python reimplementation bound to the
- * shipped C by a regex source scan. That module's own docstring named why a
- * native test was unavailable: the arithmetic lived in a translation unit
- * gated on the three ARDUINO_AVR_* board macros whose body writes ADMUX and
- * ADCSRA. Extracting the arithmetic removed that blocker, so the properties
- * are now asserted against the shipped C itself, compiled and executed.
+ * The properties are asserted against the shipped C itself, compiled and
+ * executed. The arithmetic has no board dependency.
  *
- * The 64-bit reference form below is the pre-reformulation shipped code. It
- * is a reference implementation for an equivalence claim, not a second
- * production path.
+ * The 64-bit reference form below is the exact-arithmetic form. It is a
+ * reference implementation for an equivalence claim, not a second production
+ * path.
  */
 
 #include <unity.h>
@@ -31,7 +26,7 @@
 static const uint32_t kR1 = VALUE_R1;
 static const uint32_t kR2 = VALUE_R2;
 
-// The 64-bit form rurp_scale_voltage_mv replaced:
+// The 64-bit form that rurp_scale_voltage_mv matches:
 //   numerator   = adc * 1100 * (r1 + r2)
 //   denominator = bandgap_adc * r2
 //   result      = (numerator + denominator / 2) / denominator
@@ -192,18 +187,15 @@ static void test_nominal_bandgap_is_the_identity(void) {
 
 static void test_back_solve_from_a_measured_supply(void) {
     // Vbg = VCC_meter * bandgap_adc / adc_full_scale, the whole measurement.
-    // The three boards measured on 2026-09-26, from BENCH-RECORD.md, at the
-    // AVR's 10-bit full scale.
+    // Three measured boards, at the AVR's 10-bit full scale.
     TEST_ASSERT_EQUAL_UINT16(1024, rurp_bandgap_from_measured_vcc(5090, 206, 1024));
     TEST_ASSERT_EQUAL_UINT16(1100, rurp_bandgap_from_measured_vcc(4940, 228, 1024));
     TEST_ASSERT_EQUAL_UINT16(1050, rurp_bandgap_from_measured_vcc(5120, 210, 1024));
 }
 
 static void test_back_solve_scales_with_the_adc_width(void) {
-    // This unit is linked into BOTH targets -- src/proms/memory.cpp and
-    // src/firestarter.cpp call into it -- so the 10-bit constant it used to
-    // hardcode was wrong by a factor of four on the PY32's 12-bit ADC, and
-    // silently: a calibration would simply have been four times off.
+    // This unit is linked into both the AVR and the PY32 targets. The PY32
+    // ADC is 12-bit, so the full scale is a parameter.
     //
     // A 12-bit ADC reading the SAME physical voltage gives four times the
     // count, and must back-solve to the same bandgap.
