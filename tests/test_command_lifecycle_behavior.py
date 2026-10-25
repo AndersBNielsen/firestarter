@@ -47,6 +47,9 @@ extern "C" rurp_configuration_t* rurp_get_config() {
 }
 extern "C" void rurp_save_config(rurp_configuration_t*) {}
 extern "C" bool rurp_config_migrate(rurp_configuration_t*) { return false; }
+extern "C" bool rurp_config_commit(rurp_configuration_t*, const rurp_configuration_t*) {
+    return true;
+}
 extern "C" long rurp_get_bandgap_adc_reading() { return 0; }
 extern "C" uint16_t rurp_bandgap_from_measured_vcc(uint32_t, uint32_t, uint32_t) {
     return 1100;
@@ -117,7 +120,7 @@ static void reset() {
     handle = {};
     handle.cmd = CMD_IDLE;
     fake_ms = 100;
-    timeout = 0;
+    timeout_started_ms = 0;
     incoming.clear();
     reads = configured = writes = logged = 0;
     ce_level = 0;
@@ -143,7 +146,7 @@ int main() {
     reset();
     arm();
     handle.cmd = CMD_READ;
-    timeout = 50;  // clock is at 100; abort before dispatch
+    timeout_started_ms = fake_ms - TIMEOUT_MS;  // started one timeout ago; abort before dispatch
     loop();
     assert_idle();
     assert(reads == 0);
@@ -159,7 +162,7 @@ int main() {
     puts("PASS completion");
 
     reset();
-    timeout = 500;  // unexpired deadline carried over from prior command
+    timeout_started_ms = fake_ms;  // unexpired timer carried over from prior command
     arm();
     frame("{\"cmd\":2,\"address\":-256,\"memory-size\":65536,"
           "\"algorithm\":7,\"pin-count\":28,\"vpp_mv\":12500}");
