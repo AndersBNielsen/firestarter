@@ -56,6 +56,36 @@ static unsigned long simple_strtoul(const char* s) {
     jsoneq_(json, tok, PSTR(s))
 
 /*
+ * Parse an unsigned decimal for a configuration field. Unlike simple_strtoul
+ * it reports failure instead of wrapping or reading 0: it returns false when
+ * the text has no leading digit (this includes a '-' sign) or when the value
+ * does not fit in 32 bits.
+ */
+static bool parse_u32_checked(const char* s, uint32_t* out) {
+    uint32_t val = 0;
+    if (*s < '0' || *s > '9') {
+        return false;
+    }
+    while (*s >= '0' && *s <= '9') {
+        uint8_t digit = (uint8_t)(*s - '0');
+        if (val > (0xFFFFFFFFUL - digit) / 10UL) {
+            return false;
+        }
+        val = val * 10UL + digit;
+        s++;
+    }
+    *out = val;
+    return true;
+}
+
+/* Largest value a signed 32-bit configuration field (r1, r2) can hold. */
+#define CFG_LONG_MAX 0x7FFFFFFFUL
+
+/* Largest supply voltage, in millivolts, a calibration frame may report. A
+ * larger value would overflow the bandgap back-solve product. */
+#define CFG_MEASURED_VCC_MAX_MV 10000UL
+
+/*
  * Highest VPP any chip needs, in millivolts. The chip database tops out at
  * 25000 mV (rows that take VPP straight from the VPE rail). A request above
  * this is refused.
@@ -574,32 +604,74 @@ bool get_vpp_pin(const char* json, jsmntok_t* tokens, int pos, firestarter_handl
     extract_int("vpp-pin", handle->bus_config.vpp_line);
 }
 
+/*
+ * The config getters below return false, not a wrapped value, when the number
+ * is missing, negative, or too large for its field. json_parse_config then
+ * finds no getter for the key and refuses the frame.
+ */
+static bool get_config_value(const char* json, jsmntok_t* tokens, int pos, const char* key,
+                             uint32_t max, uint32_t* out) {
+    uint32_t value;
+    if (jsoneq_(json, &tokens[pos], key) != 0) {
+        return false;
+    }
+    if (!parse_u32_checked(json + tokens[pos + 1].start, &value) || value > max) {
+        return false;
+    }
+    *out = value;
+    return true;
+}
+
 bool get_r1(const char* json, jsmntok_t* tokens, int pos, rurp_configuration_t* config) {
-    extract_long("r1", config->r1);
+    uint32_t value;
+    if (!get_config_value(json, tokens, pos, PSTR("r1"), CFG_LONG_MAX, &value)) {
+        return false;
+    }
+    config->r1 = (long)value;
+    return true;
 }
 
 bool get_r2(const char* json, jsmntok_t* tokens, int pos, rurp_configuration_t* config) {
-    extract_long("r2", config->r2);
+    uint32_t value;
+    if (!get_config_value(json, tokens, pos, PSTR("r2"), CFG_LONG_MAX, &value)) {
+        return false;
+    }
+    config->r2 = (long)value;
+    return true;
 }
 
 bool get_rev(const char* json, jsmntok_t* tokens, int pos, rurp_configuration_t* config) {
-    extract_int("rev", config->hardware_revision);
+    uint32_t value;
+    if (!get_config_value(json, tokens, pos, PSTR("rev"), 0xFFUL, &value)) {
+        return false;
+    }
+    config->hardware_revision = (uint8_t)value;
+    return true;
 }
 
 #if RURP_HAS_BANDGAP_CAL
 bool get_vcc(const char* json, jsmntok_t* tokens, int pos, rurp_configuration_t* config) {
+    uint32_t value;
     (void)config;
-    extract_long("vcc", s_measured_vcc_mv);
+    if (!get_config_value(json, tokens, pos, PSTR("vcc"), CFG_MEASURED_VCC_MAX_MV, &value)) {
+        return false;
+    }
+    s_measured_vcc_mv = (long)value;
+    return true;
 }
 
 /*
- * Write the stored bandgap directly. This is the escape hatch -- restoring the
- * nominal, or re-applying a calibration recorded elsewhere. The config command
- * refuses an out-of-band value before it is stored, so a bad one cannot reach
- * the conversion.
+ * Write the stored bandgap directly: restore the nominal, or re-apply a
+ * calibration recorded elsewhere. The config command refuses an out-of-band
+ * value before it is stored, so a bad one cannot reach the conversion.
  */
 bool get_bg(const char* json, jsmntok_t* tokens, int pos, rurp_configuration_t* config) {
-    extract_int("bg", config->bandgap_mv);
+    uint32_t value;
+    if (!get_config_value(json, tokens, pos, PSTR("bg"), 0xFFFFUL, &value)) {
+        return false;
+    }
+    config->bandgap_mv = (uint16_t)value;
+    return true;
 }
 #endif
 
