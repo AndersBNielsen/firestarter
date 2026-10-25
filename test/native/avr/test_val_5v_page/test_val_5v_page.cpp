@@ -59,6 +59,7 @@ extern "C" uint8_t recorded_data(int i);
 extern "C" bool bus_recording_saturated();
 
 static std::vector<uint8_t> s_wire_bytes;
+static uint32_t s_millis = 0;
 
 static uint8_t s_stub_raw_value = 0;
 static uint8_t stub_get_data_return_fixed(firestarter_handle_t* handle, uint32_t address) {
@@ -77,6 +78,8 @@ void setUp(void) {
     When(OverloadedMethod(ArduinoFake(Serial), write, size_t(const uint8_t*, size_t))).AlwaysReturn(1);
     When(Method(ArduinoFake(Serial), flush)).AlwaysReturn();
     When(Method(ArduinoFake(), delayMicroseconds)).AlwaysReturn();
+    s_millis = 0;
+    When(Method(ArduinoFake(), millis)).AlwaysDo([]() -> unsigned long { return s_millis++; });
     When(Method(ArduinoFake(), delay)).AlwaysReturn();
     clear_bus_recording();
 }
@@ -1008,9 +1011,66 @@ void test_5v_page_lock_status_mode_bracketing(void) {
     TEST_ASSERT_EQUAL_HEX8(0x55, msb[6]);
 }
 
+/* The page wait polls DQ7 of the last byte loaded, not the whole byte. */
+static uint8_t s_part_answer = 0;
+static int s_part_reads = 0;
+static uint8_t stub_part(firestarter_handle_t* handle, uint32_t address) {
+    (void)handle; (void)address;
+    s_part_reads++;
+    return s_part_answer;
+}
+
+static firestarter_handle_t make_one_page_write(uint8_t last_byte) {
+    firestarter_handle_t h = {};
+    h.bus_config = DIP32_FLASH_BUS;
+    h.protocol       = 0x05;
+    h.cmd            = CMD_WRITE;
+    h.response_code  = RESPONSE_CODE_OK;
+    h.mem_size       = 65536;
+    h.page_size      = 64;
+    h.address        = 0x1000;
+    h.data_size      = 64;
+    h.data_buffer[63] = (char)last_byte;
+    configure_memory(&h);
+    h.firestarter_get_data = stub_part;
+    s_part_reads = 0;
+    return h;
+}
+
+void test_5v_page_wait_ends_on_dq7_not_the_whole_byte(void) {
+    firestarter_handle_t h = make_one_page_write(0x7F);
+    s_part_answer = 0x00; /* DQ7 agrees with 0x7F, the other bits do not */
+
+    h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
+        "DQ7 alone says the page write ended; the host verify checks the data");
+    TEST_ASSERT_EQUAL_MESSAGE(2, s_part_reads, "two consecutive DQ7 matches end the wait");
+}
+
+void test_5v_page_wait_times_out_with_the_last_byte_in_the_report(void) {
+    firestarter_handle_t h = make_one_page_write(0x7F);
+    s_part_answer = 0x80; /* DQ7 stays complemented: still writing */
+
+    h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);
+    TEST_ASSERT_TRUE(s_wire_bytes.size() > 11);
+    TEST_ASSERT_EQUAL_HEX8(MSG_ERR_FL4_VERIFY_TIMEOUT, s_wire_bytes[6]);
+    /* [expected][u24 address][observed] */
+    TEST_ASSERT_EQUAL_HEX8(0x7F, s_wire_bytes[7]);
+    TEST_ASSERT_EQUAL_HEX8(0x00, s_wire_bytes[8]);
+    TEST_ASSERT_EQUAL_HEX8(0x10, s_wire_bytes[9]);
+    TEST_ASSERT_EQUAL_HEX8(0x3F, s_wire_bytes[10]);
+    TEST_ASSERT_EQUAL_HEX8(0x80, s_wire_bytes[11]);
+}
+
 int main(int argc, char** argv) {
     (void)argc; (void)argv;
     UNITY_BEGIN();
+
+    RUN_TEST(test_5v_page_wait_ends_on_dq7_not_the_whole_byte);
+    RUN_TEST(test_5v_page_wait_times_out_with_the_last_byte_in_the_report);
 
     /* Protocol 0x05 configure-phase VPP-safety proof */
     RUN_TEST(test_5v_page_0x05_read_configure_no_vpp);
