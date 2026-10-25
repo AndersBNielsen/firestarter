@@ -73,8 +73,14 @@ void flash_nor_unlock_write_init(firestarter_handle_t* handle) {
             }
         }
 
+        // Only a write from address 0 erases, and it erases the whole chip.
+        // erase_execute turns a non-zero address into ONE sector erase: that
+        // left every later sector of the write unerased, and it erased the
+        // bytes of the first sector below the start address. The sector size
+        // differs per part and the firmware does not know it, so an offset
+        // write erases nothing; the host checks that its region is blank.
         if (is_flag_set(FLAG_CAN_ERASE)) {
-            if (!is_flag_set(FLAG_SKIP_ERASE)) {
+            if (!is_flag_set(FLAG_SKIP_ERASE) && handle->address == 0) {
                 flash_nor_unlock_erase_execute(handle);
             }
             else {

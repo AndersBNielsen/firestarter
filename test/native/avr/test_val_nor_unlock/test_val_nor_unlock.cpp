@@ -449,6 +449,24 @@ void test_nor_unlock_write_init_erases_and_waits(void) {
     TEST_ASSERT_EQUAL_MESSAGE(3, s_status_reads, "write init must wait for its chip erase");
 }
 
+/* A write at a non-zero offset must not sector-erase: one sector erase left
+ * the rest of the region unerased and destroyed the bytes below the start in
+ * the first sector. */
+void test_nor_unlock_offset_write_init_does_not_erase(void) {
+    firestarter_handle_t h = make_handle(CMD_WRITE);
+    h.ctrl_flags = FLAG_CAN_ERASE;
+    h.address = 0x11000UL;
+    configure_memory(&h);
+    h.firestarter_get_data = stub_status;
+    clear_bus_recording();
+
+    h.firestarter_operation_init(&h);
+
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_OK, h.response_code);
+    TEST_ASSERT_EQUAL_MESSAGE(0, s_status_reads, "no erase, so no erase wait");
+    TEST_ASSERT_EQUAL_MESSAGE(0, bus_recording_count(), "no erase command cycle at all");
+}
+
 /* A part that is still programming answers with DQ7 complemented, then the
  * true byte. */
 static int s_program_busy_reads = 0;
@@ -518,6 +536,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_nor_unlock_erase_that_leaves_data_is_not_blank);
     RUN_TEST(test_nor_unlock_failed_erase_resets_the_part);
     RUN_TEST(test_nor_unlock_write_init_erases_and_waits);
+    RUN_TEST(test_nor_unlock_offset_write_init_does_not_erase);
     RUN_TEST(test_nor_unlock_program_waits_at_the_written_address);
     RUN_TEST(test_nor_unlock_program_that_never_ends_times_out);
 
