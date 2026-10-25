@@ -356,7 +356,14 @@ void mem_util_set_address(firestarter_handle_t* handle, uint32_t address) {
 }
 
 void memory_read_execute(firestarter_handle_t* handle) {
-    int buf_size = min(handle->mem_size - handle->address, DATA_BUFFER_SIZE);
+    if (handle->address > handle->mem_size) {
+        handle->data_size = 0;
+        LOG_ERROR_ID(MSG_ERR_OUT_OF_RANGE);
+        handle->response_code = RESPONSE_CODE_ERROR;
+        return;
+    }
+    const uint32_t remaining = handle->mem_size - handle->address;
+    const int buf_size = (int)min(remaining, (uint32_t)DATA_BUFFER_SIZE);
     LOG_DEBUG_ID_SUB_U24(DBG_READING_FROM_ADDRESS, handle->address);
     for (int i = 0; i < buf_size; i++) {
         uint8_t data = handle->firestarter_get_data(handle, handle->address + i);
@@ -406,6 +413,13 @@ uint8_t memory_get_data(firestarter_handle_t* handle, uint32_t address) {
 }
 
 void memory_write_execute(firestarter_handle_t* handle) {
+    if (handle->data_size > DATA_BUFFER_SIZE ||
+        !mem_util_range_fits(handle->address, handle->data_size,
+                             mem_util_operation_end(handle))) {
+        LOG_ERROR_ID(MSG_ERR_OUT_OF_RANGE);
+        handle->response_code = RESPONSE_CODE_ERROR;
+        return;
+    }
     for (uint32_t i = 0; i < handle->data_size; i++) {
         handle->firestarter_set_data(handle, handle->address + i, handle->data_buffer[i]);
     }
@@ -424,6 +438,12 @@ void memory_set_data(firestarter_handle_t* handle, uint32_t address, uint8_t dat
 }
 
 void memory_verify_execute(firestarter_handle_t* handle) {
+    if (handle->data_size > DATA_BUFFER_SIZE ||
+        !mem_util_range_fits(handle->address, handle->data_size, handle->mem_size)) {
+        LOG_ERROR_ID(MSG_ERR_OUT_OF_RANGE);
+        handle->response_code = RESPONSE_CODE_ERROR;
+        return;
+    }
     for (uint32_t i = 0; i < handle->data_size; i++) {
         uint8_t byte = handle->firestarter_get_data(handle, handle->address + i);
         uint8_t expected = handle->data_buffer[i];

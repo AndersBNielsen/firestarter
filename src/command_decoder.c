@@ -66,6 +66,21 @@ static uint8_t validate_memory(uint8_t cmd, const uint8_t* p) {
          p[CF_MEMORY_OFF_PINS] == 0 || be16(p + CF_MEMORY_OFF_VPP_MV) == 0)) {
         return CF_REFUSE_MISSING_FIELD;
     }
+    /* Refuse a bad cursor before configure_memory() touches bus registers
+     * (#120). A read uses the whole device; a write may end at region_end. */
+    if (cmd == CMD_READ || cmd == CMD_WRITE) {
+        uint32_t mem_size = be32(p + CF_MEMORY_OFF_MEM_SIZE);
+        uint32_t end = mem_size;
+        if (cmd == CMD_WRITE) {
+            uint32_t region_end = be32(p + CF_MEMORY_OFF_REGION_END);
+            if (region_end != 0 && region_end < mem_size) {
+                end = region_end;
+            }
+        }
+        if (be32(p + CF_MEMORY_OFF_ADDRESS) > end) {
+            return CF_REFUSE_ADDRESS_RANGE;
+        }
+    }
     return CMD_DECODE_OK;
 }
 

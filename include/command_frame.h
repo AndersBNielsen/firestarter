@@ -71,6 +71,7 @@
 #define CF_REFUSE_READ_TIMING 8  /* a read timing exceeds 1000 us */
 #define CF_REFUSE_CONFIG_FIELD 9  /* the config frame names an unknown or unsupported value */
 #define CF_REFUSE_MISSING_FIELD 10  /* a memory command lacks memory-size, algorithm, pin-count or vpp_mv */
+#define CF_REFUSE_ADDRESS_RANGE 11  /* the start address is past the end of the device or the write region */
 
 /* The payload a command carries. Unlisted commands carry none. */
 static inline uint8_t cf_payload_kind(uint8_t cmd) {

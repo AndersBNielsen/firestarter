@@ -22,6 +22,12 @@ void memory_verify_execute(firestarter_handle_t* handle);
  * means the whole device; otherwise use region_end. The clamp prevents
  * an invalid host-supplied range from extending beyond the device. */
 uint32_t mem_util_operation_end(const firestarter_handle_t* handle);
+
+/* Validate a half-open memory range without forming address + size.
+ * An empty transfer at the exclusive end is valid. */
+static inline bool mem_util_range_fits(uint32_t address, uint32_t size, uint32_t end) {
+    return address <= end && size <= end - address;
+}
 void mem_util_set_address(firestarter_handle_t* handle, uint32_t address);
 rurp_register_t mem_util_calculate_lsb_register(firestarter_handle_t* handle, uint32_t address);
 rurp_register_t mem_util_calculate_msb_register(firestarter_handle_t* handle, uint32_t address);
