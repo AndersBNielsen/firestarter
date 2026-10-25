@@ -32,14 +32,28 @@ using namespace fakeit;
 /* Declared in this suite's host_stubs.cpp; called here to inject mock state. */
 extern "C" void set_mock_vpp_mv(uint16_t mv);
 extern "C" void set_mock_hw_rev(uint8_t rev);
+extern "C" void set_on_measure(void (*fn)(void));
 
 static rurp_register_t s_last_ctrl_reg = 0;
 static bool s_last_ctrl_state = false;
 static unsigned s_ctrl_writes_with_p1_low = 0;
 static unsigned s_ctrl_writes_asserting_hv = 0;
+static unsigned s_p1_asserts = 0;
+static unsigned s_p1_asserts_before_measure = 0;
+static rurp_register_t s_first_hv_assert = 0;
+static bool s_measured = false;
 static void mock_set_ctrl_reg(struct firestarter_handle*, rurp_register_t reg, bool state) {
     s_last_ctrl_reg = reg;
     s_last_ctrl_state = state;
+    if (state && (reg & (CTRL_VPP_REGULATOR_ENABLE | CTRL_VPP_P1_ENABLE)) && s_first_hv_assert == 0) {
+        s_first_hv_assert = reg;
+    }
+    if (state && (reg & CTRL_VPP_P1_ENABLE)) {
+        s_p1_asserts++;
+        if (!s_measured) {
+            s_p1_asserts_before_measure++;
+        }
+    }
     if ((reg & CTRL_VPP_P1_ENABLE) && state == false) {
         s_ctrl_writes_with_p1_low++;
     }
@@ -47,6 +61,7 @@ static void mock_set_ctrl_reg(struct firestarter_handle*, rurp_register_t reg, b
         s_ctrl_writes_asserting_hv++;
     }
 }
+static void mark_measured(void) { s_measured = true; }
 static bool mock_get_ctrl_reg(struct firestarter_handle*, rurp_register_t) { return 0; }
 static void mock_set_data(struct firestarter_handle*, uint32_t, uint8_t) {}
 static uint8_t mock_get_data(struct firestarter_handle*, uint32_t) { return 0xFF; }
@@ -68,6 +83,11 @@ void setUp(void) {
     s_last_ctrl_state = false;
     s_ctrl_writes_with_p1_low = 0;
     s_ctrl_writes_asserting_hv = 0;
+    s_p1_asserts = 0;
+    s_p1_asserts_before_measure = 0;
+    s_first_hv_assert = 0;
+    s_measured = false;
+    set_on_measure(mark_measured);
     /* Restore the shipped calibration: the refusal cases below mutate it. */
     rurp_get_config()->r1 = VALUE_R1;
     rurp_get_config()->r2 = VALUE_R2;
@@ -315,6 +335,56 @@ void test_an_uncalibrated_board_says_so(void) {
     TEST_ASSERT_EQUAL(RESPONSE_CODE_OK, run_at(12000, 12000, 0));
 }
 
+/*
+ * The pin 1 route follows the measurement (afdbba4's intent): the regulator
+ * alone comes up and is measured, and only an in-window reading routes VPP
+ * to socket pin 1.
+ */
+static uint8_t run_init(uint8_t cmd, uint16_t measured) {
+    set_mock_vpp_mv(measured);
+    firestarter_handle_t h = make_intel_handle(12000, 0);
+    h.cmd = cmd;
+    configure_memory(&h);
+    h.firestarter_set_control_register = mock_set_ctrl_reg;
+    TEST_ASSERT_NOT_NULL(h.firestarter_operation_init);
+    h.firestarter_operation_init(&h);
+    return h.response_code;
+}
+
+void test_write_init_measures_before_routing_pin1(void) {
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_OK, run_init(CMD_WRITE, 12000));
+    TEST_ASSERT_EQUAL_HEX16_MESSAGE(CTRL_VPP_REGULATOR_ENABLE, s_first_hv_assert,
+        "the first high-voltage assert must be the regulator alone");
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(0, s_p1_asserts_before_measure,
+        "pin 1 must not see VPP before the rail is measured");
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(1, s_p1_asserts, "an in-window rail is routed to pin 1");
+}
+
+void test_write_init_high_rail_never_reaches_pin1(void) {
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_ERROR, run_init(CMD_WRITE, 12700));
+    TEST_ASSERT_EQUAL_UINT(0, s_p1_asserts);
+    TEST_ASSERT_FALSE(s_last_ctrl_state);
+}
+
+void test_erase_init_measures_before_routing_pin1(void) {
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_OK, run_init(CMD_ERASE, 12000));
+    TEST_ASSERT_EQUAL_HEX16(CTRL_VPP_REGULATOR_ENABLE, s_first_hv_assert);
+    TEST_ASSERT_EQUAL_UINT(0, s_p1_asserts_before_measure);
+    TEST_ASSERT_EQUAL_UINT(1, s_p1_asserts);
+}
+
+void test_erase_init_high_rail_refuses_and_never_reaches_pin1(void) {
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_ERROR, run_init(CMD_ERASE, 12700));
+    TEST_ASSERT_EQUAL_UINT(0, s_p1_asserts);
+    TEST_ASSERT_FALSE(s_last_ctrl_state);
+}
+
+void test_erase_init_refuses_bad_calibration_before_any_hv(void) {
+    rurp_get_config()->r2 = 0;
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_ERROR, run_init(CMD_ERASE, 12000));
+    TEST_ASSERT_EQUAL_UINT(0, s_ctrl_writes_asserting_hv);
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_flash_intel_vpp_nominal_proceeds);
@@ -332,5 +402,10 @@ int main(int, char**) {
     RUN_TEST(test_low_side_is_unchanged_at_five_percent);
     RUN_TEST(test_force_downgrades_high_but_not_the_threshold);
     RUN_TEST(test_an_uncalibrated_board_says_so);
+    RUN_TEST(test_write_init_measures_before_routing_pin1);
+    RUN_TEST(test_write_init_high_rail_never_reaches_pin1);
+    RUN_TEST(test_erase_init_measures_before_routing_pin1);
+    RUN_TEST(test_erase_init_high_rail_refuses_and_never_reaches_pin1);
+    RUN_TEST(test_erase_init_refuses_bad_calibration_before_any_hv);
     return UNITY_END();
 }

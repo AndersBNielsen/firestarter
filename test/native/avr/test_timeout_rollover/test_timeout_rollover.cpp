@@ -182,10 +182,8 @@ void test_intel_status_poll_times_out_after_15000_ms_across_the_wrap(void) {
     h.firestarter_set_control_register = noop_set_ctrl_reg;
     h.firestarter_set_data = noop_set_data;
     h.firestarter_get_data = busy_status;
-    /* The erase waits 500 ms for the regulator before it polls, so start
-     * the clock 500 ms earlier to put the poll itself across the wrap. */
-    start_clock(1, kStartNearWrap - 500U);
-    s_started = kStartNearWrap;
+    /* The rail comes up in erase init, so the erase polls at once. */
+    start_clock(1);
     try {
         h.firestarter_operation_main(&h);
     } catch (const ClockRunaway&) {
