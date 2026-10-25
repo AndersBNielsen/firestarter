@@ -48,7 +48,8 @@ extern "C" {
 
     /* EPROM overprogram support differs by target to preserve bootloader space.
  * Leonardo disables this call site because the ATmega32U4 USB bootloader
- * begins at 28672 B, although the configured linker ceiling is 32768 B.
+ * begins at 28672 B. PlatformIO's size check fails the build when the image
+ * grows past it.
  * No shipped chip row currently sets overprogram_factor, so this difference
  * is inert until such a row is introduced. Re-measure the Leonardo firmware
  * size before enabling the feature on that board. */
