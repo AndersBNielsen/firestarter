@@ -204,8 +204,12 @@ bool init_programmer_framed(firestarter_handle_t* handle) {
 #endif
         _ready[3] = _vlen;
         memcpy(_ready + 4, _ver, _vlen);
-        uint16_t _budget = eprom_block_budget_s(handle->protocol, handle->pulse_delay,
-                                                 (uint32_t)DATA_BUFFER_SIZE);
+        // Only a memory command parses a protocol for this frame. Any other
+        // command could still hold the protocol of an earlier command.
+        uint16_t _budget = is_memory_cmd(handle->cmd)
+                               ? eprom_block_budget_s(handle->protocol, handle->pulse_delay,
+                                                      (uint32_t)DATA_BUFFER_SIZE)
+                               : 0;
         _ready[4 + _vlen]     = (uint8_t)((_budget >> 8) & 0xFF);
         _ready[4 + _vlen + 1] = (uint8_t)(_budget & 0xFF);
         LOG_OK_ID_BYTES(MSG_OK_READY, _ready, (uint8_t)(4 + _vlen + 2));
