@@ -77,6 +77,56 @@ static void poison(firestarter_handle_t* h) {
     h->bus_config.matching_lines = 0xEE;
 }
 
+/* Every field poison() writes still holds its poison value. */
+static void assert_poisoned(const firestarter_handle_t* h, const char* name) {
+    uint8_t poisoned_lines[ADDRESS_LINES_SIZE];
+    memset(poisoned_lines, 0xEE, sizeof(poisoned_lines));
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0xDEADBEEF, h->mem_size, name);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0xDEADBEEF, h->address, name);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0xDEADBEEF, h->region_end, name);
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0xEE, h->protocol, name);
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0xEE, h->pins, name);
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(0xEEEE, h->vpp_mv, name);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0xDEADBEEF, h->pulse_delay, name);
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(0xEEEE, h->chip_id, name);
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(0xEEEE, h->page_size, name);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0xDEADBEEF, h->read_settling_us, name);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0xDEADBEEF, h->read_strobe_us, name);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY_MESSAGE(poisoned_lines, h->bus_config.address_lines,
+                                          ADDRESS_LINES_SIZE, name);
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0xEE, h->bus_config.rw_line, name);
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0xEE, h->bus_config.vpp_line, name);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0xDEADBEEF, h->bus_config.static_high_mask, name);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0xDEADBEEF, h->bus_config.address_mask, name);
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0xEE, h->bus_config.matching_lines, name);
+}
+
+/* cmd_apply_config writes exactly the fields the frame marks present. */
+static void assert_config_applied(const firestarter_handle_t* h, const cf_accept_vector_t* v) {
+    rurp_configuration_t config;
+    memset(&config, 0xEE, sizeof(config));
+    const rurp_configuration_t before = config;
+    uint8_t res = cmd_apply_config(h, &config);
+    bool changes = v->cfg_present & (CF_CONFIG_PRESENT_R1 | CF_CONFIG_PRESENT_R2 |
+                                     CF_CONFIG_PRESENT_REV | CF_CONFIG_PRESENT_BG);
+    TEST_ASSERT_EQUAL_MESSAGE(changes, (res & CMD_CFG_FIELD_CHANGED) != 0, v->name);
+    TEST_ASSERT_EQUAL_MESSAGE((v->cfg_present & CF_CONFIG_PRESENT_VCC) != 0,
+                              (res & CMD_CFG_CALIBRATE) != 0, v->name);
+    TEST_ASSERT_EQUAL_INT32_MESSAGE(
+        v->cfg_present & CF_CONFIG_PRESENT_R1 ? (long)v->cfg_r1 : before.r1, config.r1, v->name);
+    TEST_ASSERT_EQUAL_INT32_MESSAGE(
+        v->cfg_present & CF_CONFIG_PRESENT_R2 ? (long)v->cfg_r2 : before.r2, config.r2, v->name);
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(
+        v->cfg_present & CF_CONFIG_PRESENT_REV ? v->cfg_rev : before.hardware_revision,
+        config.hardware_revision, v->name);
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(
+        v->cfg_present & CF_CONFIG_PRESENT_BG ? v->cfg_bg : before.bandgap_mv, config.bandgap_mv,
+        v->name);
+    if (v->cfg_present & CF_CONFIG_PRESENT_VCC) {
+        TEST_ASSERT_EQUAL_UINT16_MESSAGE(v->cfg_vcc, cmd_config_measured_vcc_mv(h), v->name);
+    }
+}
+
 void test_every_accept_vector_decodes_to_its_fields(void) {
     for (size_t i = 0; i < CF_ACCEPT_VECTOR_COUNT; i++) {
         const cf_accept_vector_t* v = &CF_ACCEPT_VECTORS[i];
@@ -85,6 +135,9 @@ void test_every_accept_vector_decodes_to_its_fields(void) {
         TEST_ASSERT_EQUAL_UINT8_MESSAGE(CMD_DECODE_OK, load(&h, v->frame, v->frame_len), v->name);
         TEST_ASSERT_EQUAL_UINT8_MESSAGE(v->cmd, h.cmd, v->name);
         TEST_ASSERT_EQUAL_UINT16_MESSAGE(v->flags, h.ctrl_flags, v->name);
+        if (v->kind == CF_KIND_CONFIG) {
+            assert_config_applied(&h, v);
+        }
         if (v->kind != CF_KIND_MEMORY) {
             continue;
         }
@@ -124,11 +177,7 @@ void test_refused_memory_frame_leaves_every_parameter_untouched(void) {
         firestarter_handle_t h = {};
         poison(&h);
         load(&h, v->frame, v->frame_len);
-        TEST_ASSERT_EQUAL_UINT32_MESSAGE(0xDEADBEEF, h.mem_size, v->name);
-        TEST_ASSERT_EQUAL_UINT8_MESSAGE(0xEE, h.protocol, v->name);
-        TEST_ASSERT_EQUAL_UINT32_MESSAGE(0xDEADBEEF, h.pulse_delay, v->name);
-        TEST_ASSERT_EQUAL_UINT8_MESSAGE(0xEE, h.bus_config.address_lines[0], v->name);
-        TEST_ASSERT_EQUAL_UINT32_MESSAGE(0xDEADBEEF, h.bus_config.address_mask, v->name);
+        assert_poisoned(&h, v->name);
     }
 }
 
