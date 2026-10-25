@@ -30,7 +30,7 @@
 #define min(a, b) ((a) < (b) ? (a) : (b))
 #endif
 
-// AVR delayMicroseconds() accurate ceiling -- see mem_util_delay_us /
+// AVR delayMicroseconds() accurate ceiling. See mem_util_delay_us and
 // mem_util_split_delay below.
 #define MEM_UTIL_DELAY_US_MAX 16383UL
 
@@ -55,9 +55,8 @@ void configure_memory(firestarter_handle_t* handle) {
     // board header), refuse every command that can energise the PROM bus, BEFORE
     // any handler is configured. The three operation pointers are still NULL here,
     // so this early return leaves the handle exactly as configure_not_implemented()
-    // would. The payload is the COMMAND ordinal, not the protocol ordinal -- this
-    // is a command-admission refusal, not a protocol-dispatch one. On AVR targets
-    // RURP_PINMAP_PROVISIONAL is never defined, so this compiles to nothing.
+    // would. The payload is the COMMAND ordinal, not the protocol ordinal. On AVR
+    // targets RURP_PINMAP_PROVISIONAL is never defined, so this compiles to nothing.
     if (rurp_pinmap_refuses(handle->cmd)) {
         LOG_ERROR_ID_U8(MSG_ERR_NOT_SUPPORTED, (uint8_t)handle->cmd);
         handle->response_code = RESPONSE_CODE_ERROR;
@@ -130,11 +129,9 @@ rurp_register_t mem_util_calculate_msb_register(firestarter_handle_t* handle, ui
 rurp_register_t mem_util_calculate_top_address_register(firestarter_handle_t* handle, uint32_t address) {
     rurp_register_t top_address = ((uint32_t)address >> 16) & (CTRL_ADDRESS_LINE_16 | CTRL_ADDRESS_LINE_17 | CTRL_ADDRESS_LINE_18 | CTRL_READ_WRITE);
     // CTRL_VPE_ENABLE, CTRL_VPP_P1_ENABLE, CTRL_VPP_A9_ENABLE and CTRL_VPP_REGULATOR_ENABLE are
-    // UNCONDITIONALLY preserved below — this is why VPE survives a per-byte verify read. It is
-    // NOT because the verify read leaves the control register alone: every address write (the
-    // one caller of this function) writes CONTROL_REGISTER unconditionally on every byte, for
-    // both the pulse and the verify; the unconditional preserve mask is what carries the route
-    // bit across that write.
+    // always preserved below. Every address write (the one caller of this function) writes
+    // CONTROL_REGISTER on every byte, for both the pulse and the verify; the preserve mask is
+    // what carries the route bit across that write.
     rurp_register_t mask = CTRL_VPP_A9_ENABLE | CTRL_VPE_ENABLE | CTRL_VPP_P1_ENABLE | CTRL_VPP_REGULATOR_ENABLE;
     // CTRL_VPP_VPE_DROP_ENABLE selects a VPP LEVEL -- VPE dropped through the
     // resistor to ~13 V -- and nothing else. Do NOT exclude pins >= 32 from the
@@ -158,13 +155,9 @@ rurp_register_t mem_util_calculate_top_address_register(firestarter_handle_t* ha
         case REVISION_2_1:
         case REVISION_2_2:
         case REVISION_2_3:
-            // The arm's nominal reach widens to every 32-pin protocol on Rev 2-class (0x0E, 0x29,
-            // 0x10, 32-pin flash), not just the EPROM family -- but none of them ever SETS the
-            // drop bit, so there is nothing for this preserve to leak. Proven, not argued:
-            // test_vpp_eprom_v131.cpp's 32-pin non-EPROM byte-identity case
-            // (test_vpp01_dip32_nonEprom_0x10_route_is_byte_identical_before_and_after) and its
-            // "preserve, never introduce" leg
-            // (test_vpp01_truthtable_pins32_rev2_2_preserve_never_introduces).
+            // This arm reaches every 32-pin protocol on Rev 2-class (0x0E, 0x29, 0x10, 32-pin
+            // flash), not just the EPROM family. None of them sets the drop bit, so the
+            // preserve introduces nothing.
             mask |= CTRL_VPP_VPE_DROP_ENABLE;
             break;
         default:
@@ -183,16 +176,9 @@ rurp_register_t mem_util_calculate_top_address_register(firestarter_handle_t* ha
     return top_address;
 }
 
-/* Shared VPP-mismatch report:
- *   [measured_V u16 BE][measured_tenths u16 BE][expected_V u16 BE][expected_tenths u16 BE]
- *
- * Severity rides entirely in msg_id -- every LOG_{WARN,ERROR}_ID_BYTES macro is
- * the same alias of LOG_ID_BYTES.
- *
- * Both millivolt parameters are uint16_t DELIBERATELY: at every call site the
- * operands are uint16_t, so `(x + 50)` promotes to 16-bit and `/1000` compiles
- * to __udivmodhi4. Widening either to uint32_t swaps in the 32-bit
- * __udivmodsi4 and moves the wrap point above 65485 mV. Do not widen them. */
+// Applies the VPP acceptance window to a measured reading. HIGH is a refusal
+// above target + max(500 mV, 3 %), downgraded to a warning by FLAG_FORCE. LOW is
+// a warning below 95 % of target.
 void mem_util_check_vpp_window(firestarter_handle_t* handle, uint16_t vpp_mv) {
     uint32_t target = (uint32_t)handle->vpp_mv;
     uint32_t headroom = target * RURP_VPP_HIGH_HEADROOM_PCT / 100;
@@ -247,6 +233,12 @@ bool mem_util_refuse_bad_calibration(firestarter_handle_t* handle) {
     return true;
 }
 
+/* Shared VPP-mismatch report:
+ *   [measured_V u16 BE][measured_tenths u16 BE][expected_V u16 BE][expected_tenths u16 BE]
+ *
+ * Both millivolt parameters are uint16_t deliberately: `(x + 50)` then
+ * promotes to 16-bit and `/1000` compiles to __udivmodhi4 on AVR. Do not
+ * widen them. */
 void mem_util_report_voltage(firestarter_handle_t* handle, uint16_t measured_mv,
                               uint16_t expected_mv, uint8_t msg_id, uint8_t response_code) {
     uint16_t _v0 = (uint16_t)((measured_mv + 50) / 1000);
