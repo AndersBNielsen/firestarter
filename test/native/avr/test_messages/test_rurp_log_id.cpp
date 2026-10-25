@@ -40,6 +40,7 @@ extern "C" {
 #include "rurp_shield.h"
 #include "messages.h"
 }
+#include "deferred_log.h"
 
 using namespace fakeit;
 
@@ -279,6 +280,78 @@ void test_oversize_param_count_rejected(void) {
     TEST_ASSERT_EQUAL_HEX8(0x0A, captured[263]); // anchor
 }
 
+/* Uno deferred-log queue (henols/firestarter#125). */
+
+static void push_ids(deferred_log_t* log, const uint8_t* ids, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        uint8_t p = (uint8_t)i;
+        TEST_ASSERT_TRUE(deferred_log_push(log, ids[i], &p, 1));
+    }
+}
+
+static void assert_queue(const deferred_log_t* log, const uint8_t* ids, size_t n) {
+    TEST_ASSERT_EQUAL_UINT8(n, log->count);
+    for (size_t i = 0; i < n; i++) {
+        TEST_ASSERT_EQUAL_HEX8(ids[i], log->frames[i].id);
+    }
+}
+
+void test_deferred_error_replaces_the_newest_info_frame(void) {
+    deferred_log_t log = {};
+    const uint8_t first[] = { MSG_INFO_MAIN_START, MSG_WARN_VPP_LOW, MSG_INFO_RETRIES,
+                              MSG_INFO_ADDR };
+    push_ids(&log, first, 4);
+    const uint8_t err[2] = { 0x12, 0x34 };
+    TEST_ASSERT_TRUE(deferred_log_push(&log, MSG_ERR_MAX_PULSES, err, 2));
+    const uint8_t expected[] = { MSG_INFO_MAIN_START, MSG_WARN_VPP_LOW, MSG_INFO_RETRIES,
+                                 MSG_ERR_MAX_PULSES };
+    assert_queue(&log, expected, 4);
+    TEST_ASSERT_EQUAL_UINT8(2, log.frames[3].len);
+    TEST_ASSERT_EQUAL_HEX8(0x12, log.frames[3].params[0]);
+    TEST_ASSERT_EQUAL_HEX8(0x34, log.frames[3].params[1]);
+}
+
+void test_deferred_error_keeps_the_order_of_protocol_frames(void) {
+    deferred_log_t log = {};
+    const uint8_t first[] = { MSG_DATA_PROTECTION_STATUS, MSG_WARN_VPP_HIGH,
+                              MSG_DATA_PROGRESS, MSG_ERR_VERIFY };
+    push_ids(&log, first, 4);
+    TEST_ASSERT_TRUE(deferred_log_push(&log, MSG_ERR_WRITE_FAILED, NULL, 0));
+    const uint8_t expected[] = { MSG_DATA_PROTECTION_STATUS, MSG_DATA_PROGRESS,
+                                 MSG_ERR_VERIFY, MSG_ERR_WRITE_FAILED };
+    assert_queue(&log, expected, 4);
+    /* The moved frames keep their own parameters. */
+    TEST_ASSERT_EQUAL_HEX8(2, log.frames[1].params[0]);
+    TEST_ASSERT_EQUAL_HEX8(3, log.frames[2].params[0]);
+}
+
+void test_deferred_full_queue_drops_a_new_info_frame(void) {
+    deferred_log_t log = {};
+    const uint8_t first[] = { MSG_INFO_MAIN_START, MSG_INFO_RETRIES, MSG_INFO_ADDR,
+                              MSG_WARN_VPP_LOW };
+    push_ids(&log, first, 4);
+    TEST_ASSERT_FALSE(deferred_log_push(&log, MSG_INFO_CMD, NULL, 0));
+    assert_queue(&log, first, 4);
+}
+
+void test_deferred_queue_without_droppable_frames_keeps_the_first_errors(void) {
+    deferred_log_t log = {};
+    const uint8_t first[] = { MSG_ERR_VERIFY, MSG_DATA_PROGRESS, MSG_ERR_TIMEOUT,
+                              MSG_MAIN_DONE };
+    push_ids(&log, first, 4);
+    TEST_ASSERT_FALSE(deferred_log_push(&log, MSG_ERR_MAX_PULSES, NULL, 0));
+    assert_queue(&log, first, 4);
+}
+
+void test_deferred_frame_longer_than_the_slot_is_truncated(void) {
+    deferred_log_t log = {};
+    uint8_t params[12];
+    for (uint8_t i = 0; i < sizeof(params); i++) params[i] = (uint8_t)(0xA0 + i);
+    TEST_ASSERT_TRUE(deferred_log_push(&log, MSG_ERR_CALIBRATION, params, sizeof(params)));
+    TEST_ASSERT_EQUAL_UINT8(DEFERRED_PARAM_MAX, log.frames[0].len);
+    TEST_ASSERT_EQUAL_MEMORY(params, log.frames[0].params, DEFERRED_PARAM_MAX);
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -290,6 +363,11 @@ int main(int argc, char** argv) {
     RUN_TEST(test_crc_polynomial_smoke);
     RUN_TEST(test_oversize_param_count_rejected);
     RUN_TEST(test_ok_ready_u16_param_frame);
+    RUN_TEST(test_deferred_error_replaces_the_newest_info_frame);
+    RUN_TEST(test_deferred_error_keeps_the_order_of_protocol_frames);
+    RUN_TEST(test_deferred_full_queue_drops_a_new_info_frame);
+    RUN_TEST(test_deferred_queue_without_droppable_frames_keeps_the_first_errors);
+    RUN_TEST(test_deferred_frame_longer_than_the_slot_is_truncated);
 
     return UNITY_END();
 }
