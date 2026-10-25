@@ -20,16 +20,19 @@ rurp_configuration_t* rurp_get_config() {
 
 void rurp_load_config() {
     rurp_configuration_t* config = rurp_get_config();
-    // The bool result is deliberately discarded: rurp_validate_config()
-    // below decides usability of whatever bytes came back (or were left
-    // untouched), which is what keeps one validate policy on both
-    // platforms rather than branching per platform here.
-    (void)rurp_config_storage_load(config, sizeof(*config));
+    // A false load copied nothing: the buffer still holds what it held
+    // before, which at boot is the zero-initialised global. Clear the
+    // version so rurp_validate_config() treats the buffer as foreign and
+    // resets every field, rather than keeping hardware_revision 0 as a
+    // REVISION_0 override.
+    if (!rurp_config_storage_load(config, sizeof(*config))) {
+        config->version[0] = '\0';
+    }
     rurp_validate_config(config);
 }
 
 void rurp_save_config(rurp_configuration_t* config) {
-    // Result deliberately discarded -- see rurp_load_config() above.
+    // Result deliberately discarded: no caller has a recovery for a failed write.
     (void)rurp_config_storage_save(config, sizeof(*config));
 }
 

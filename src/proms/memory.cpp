@@ -188,12 +188,9 @@ rurp_register_t mem_util_calculate_top_address_register(firestarter_handle_t* ha
             mask |= CTRL_VPP_VPE_DROP_ENABLE;
             break;
         default:
-            // Fail-safe direction: REVISION_0, REVISION_1, REVISION_UNKNOWN (0xFE) and any
-            // unrecognised byte keep TODAY'S stripping -- adds nothing. Matches
-            // rurp_hw_rev_utils.h:33-37's own `default` leaving ctrl_reg = 0. Deliberately an
-            // explicit four-case set above, never a `>= REVISION_2_0` range test:
-            // rurp_shield.h:25-31 numbers revisions 0..5, and a range test would silently swallow
-            // a future REVISION_2_4.
+            // Unknown and older hardware revisions retain conservative bit
+            // stripping. Match explicit supported revisions rather than a
+            // range that might include untested future hardware.
             break;
         }
     }
@@ -236,12 +233,17 @@ void mem_util_check_vpp_window(firestarter_handle_t* handle, uint16_t vpp_mv) {
 }
 
 void mem_util_warn_if_uncalibrated(firestarter_handle_t* handle) {
+#if RURP_HAS_BANDGAP_CAL
     rurp_configuration_t* cfg = rurp_get_config();
     if (cfg->bandgap_mv != (uint16_t)RURP_BANDGAP_NOMINAL_MV) {
         return;
     }
     LOG_WARN_ID(MSG_WARN_NOT_CALIBRATED);
     handle->response_code = RESPONSE_CODE_WARNING;
+#else
+    // No calibration exists to do, so there is nothing to warn about.
+    (void)handle;
+#endif
 }
 
 bool mem_util_refuse_bad_calibration(firestarter_handle_t* handle) {
@@ -354,7 +356,14 @@ void mem_util_set_address(firestarter_handle_t* handle, uint32_t address) {
 }
 
 void memory_read_execute(firestarter_handle_t* handle) {
-    int buf_size = min(handle->mem_size - handle->address, DATA_BUFFER_SIZE);
+    if (handle->address > handle->mem_size) {
+        handle->data_size = 0;
+        LOG_ERROR_ID(MSG_ERR_OUT_OF_RANGE);
+        handle->response_code = RESPONSE_CODE_ERROR;
+        return;
+    }
+    const uint32_t remaining = handle->mem_size - handle->address;
+    const int buf_size = (int)min(remaining, (uint32_t)DATA_BUFFER_SIZE);
     LOG_DEBUG_ID_SUB_U24(DBG_READING_FROM_ADDRESS, handle->address);
     for (int i = 0; i < buf_size; i++) {
         uint8_t data = handle->firestarter_get_data(handle, handle->address + i);
@@ -404,6 +413,13 @@ uint8_t memory_get_data(firestarter_handle_t* handle, uint32_t address) {
 }
 
 void memory_write_execute(firestarter_handle_t* handle) {
+    if (handle->data_size > DATA_BUFFER_SIZE ||
+        !mem_util_range_fits(handle->address, handle->data_size,
+                             mem_util_operation_end(handle))) {
+        LOG_ERROR_ID(MSG_ERR_OUT_OF_RANGE);
+        handle->response_code = RESPONSE_CODE_ERROR;
+        return;
+    }
     for (uint32_t i = 0; i < handle->data_size; i++) {
         handle->firestarter_set_data(handle, handle->address + i, handle->data_buffer[i]);
     }
@@ -422,6 +438,12 @@ void memory_set_data(firestarter_handle_t* handle, uint32_t address, uint8_t dat
 }
 
 void memory_verify_execute(firestarter_handle_t* handle) {
+    if (handle->data_size > DATA_BUFFER_SIZE ||
+        !mem_util_range_fits(handle->address, handle->data_size, handle->mem_size)) {
+        LOG_ERROR_ID(MSG_ERR_OUT_OF_RANGE);
+        handle->response_code = RESPONSE_CODE_ERROR;
+        return;
+    }
     for (uint32_t i = 0; i < handle->data_size; i++) {
         uint8_t byte = handle->firestarter_get_data(handle, handle->address + i);
         uint8_t expected = handle->data_buffer[i];
@@ -469,12 +491,8 @@ uint32_t mem_util_remap_address_bus(const firestarter_handle_t* handle, uint32_t
     return reorg_address;
 }
 
-/* The single resolution point for D-04's "0 = absent = whole device"
- * fallback and for the fail-closed clamp. A host or a corrupted frame
- * cannot widen a scan past the device: region_end above mem_size clamps
- * down to mem_size exactly like region_end == 0 does. See
- * include/memory_utils.h for why this is a function rather than an
- * inline ternary. */
+/* Resolve the operation end in one place and clamp invalid region ends to
+ * mem_size; zero denotes a whole-device operation. */
 uint32_t mem_util_operation_end(const firestarter_handle_t* handle) {
     if (handle->region_end == 0 || handle->region_end > handle->mem_size) {
         return handle->mem_size;

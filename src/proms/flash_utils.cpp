@@ -11,6 +11,7 @@
 #include "rurp_shield.h"
 #include "rurp_pinout.h"
 #include "logging_id.h"
+#include "timeout_utils.h"
 #include <stdio.h>
 
 
@@ -31,8 +32,8 @@ void flash_util_verify_operation(firestarter_handle_t* handle, uint8_t expected_
 
     handle->firestarter_set_control_register(handle, CTRL_READ_WRITE, 1);
 
-    unsigned long timeout = millis() + 150;
-    while (millis() < timeout) {
+    const uint32_t started_ms = (uint32_t)millis();
+    while (!fs_timeout_expired(started_ms, 150U, (uint32_t)millis())) {
         // Data Polling: Read from the address and check DQ7.
         // When the write is complete, the data read back will have the same DQ7 as the data written.
         if ((fu_flash_data_poll() & 0x80) == (expected_data & 0x80)) {
@@ -87,13 +88,8 @@ uint16_t flash_util_get_chip_id(firestarter_handle_t* handle) {
     return chip_id;
 }
 
-/* Shared single-byte AMD/JEDEC ID-mode read.
- * flash_util_get_chip_id above is the fixed 0x0000/0x0001 pair; a
- * protect-verify read is the identical mode with a caller-supplied
- * address, so it lives beside it rather than duplicating the sequence in
- * either family handler. Left flash_util_get_chip_id itself unchanged —
- * re-expressing its two-byte read on top of this helper would enter and
- * exit the mode twice for what is today one entry/exit pair. */
+/* Read an arbitrary AMD/JEDEC ID-mode byte for protection checks.
+ * The fixed two-byte chip-ID reader keeps one enter/exit sequence. */
 uint8_t flash_util_read_in_id_mode(firestarter_handle_t* handle, uint32_t address) {
     flash_execute_command(FLASH_ENABLE_ID);
     uint8_t data = handle->firestarter_get_data(handle, address);

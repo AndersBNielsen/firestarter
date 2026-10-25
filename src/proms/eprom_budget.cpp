@@ -12,10 +12,6 @@
  * not_implemented.cpp's include discipline so it adds zero macro-redefinition
  * warnings on the native build. PROGMEM access comes transitively through
  * eprom_params.h.
- *
- * Keep this as its OWN translation unit. protocol_branch_inventory.json pins
- * the blob SHAs of eprom.cpp and eprom_params.cpp, so folding this arithmetic
- * into either turns that golden RED.
  */
 #include "eprom_budget.h"
 #include "eprom_params.h"

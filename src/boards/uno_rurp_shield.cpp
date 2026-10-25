@@ -43,8 +43,7 @@ void rurp_board_setup() {
     // Set control pins on PORTB to output.
     // PB0-3 are register select lines, PB5 is Chip Enable.
     // PB4 is User Button input.
-    // NOTE: The original code included `CTRL_READ_WRITE` (0x40), which would attempt to control PB6.
-    // On a standard Uno, PB6 is a crystal pin and should not be used for I/O. It has been removed.
+    // PB6 is a crystal pin on Uno and must not be configured as GPIO.
     DDRB = LEAST_SIGNIFICANT_BYTE | MOST_SIGNIFICANT_BYTE | CONTROL_REGISTER | OUTPUT_ENABLE | CHIP_ENABLE;
     PORTB = USER_BUTTON;
 
@@ -75,8 +74,7 @@ void rurp_set_communication_mode() {
     while (SERIAL_PORT.available()) SERIAL_PORT.read();
     com_mode = true;
 
-    // Flush frames deferred during the programmer-mode window now that the UART is
-    // up and the wire is safe to drive (#transport-protocol-verify).
+    // Flush frames only after UART is restored and PORTD is safe to drive.
     for (uint8_t i = 0; i < deferred_count; i++) {
         _firestarter_emit_frame(deferred_log[i].id, deferred_log[i].params, deferred_log[i].len);
     }
@@ -115,7 +113,7 @@ void rurp_log_id(uint8_t id, const uint8_t* params, uint8_t param_count) {
     // drop excess rather than risk emitting on the active bus.
 }
 
-// Uno strong override for rurp_log_id_wide (W-04 MSG_DATA_CHUNK path).
+// Uno override for wide MSG_DATA_CHUNK frames.
 // Same com_mode discipline as rurp_log_id; calls the wide frame emitter.
 void rurp_log_id_wide(uint8_t id, const uint8_t* params, uint16_t param_count) {
     if (com_mode) {
@@ -125,9 +123,7 @@ void rurp_log_id_wide(uint8_t id, const uint8_t* params, uint16_t param_count) {
 
 
 void rurp_set_control_pin(uint8_t pin, uint8_t state) {
-    // This function modifies only the specified control pin on PORTB,
-    // leaving other bits (like the USER_BUTTON pull-up) untouched.
-    // The original implementation was flawed and could clear other bits.
+    // Preserve unrelated PORTB bits, including the user-button pull-up.
     if (state) {
         PORTB |= pin;
     } else {

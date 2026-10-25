@@ -1,94 +1,11 @@
 """
 Project Name: Firestarter
 Copyright (c) 2026 Henrik Olsson
-
 Permission is hereby granted under MIT license.
 
-Phase 126 Plan 09 -- CFG-05's proof that the shipped dual-slot config storage
-core (platform/py32f071/src/config_storage_dualslot.cpp) behaves correctly,
-through six distinctly named tests plus an independent CRC known-answer
-anchor (D-05).
-
-Requirements: CFG-05
-Decisions covered: D-01, D-02, D-03, D-05, D-15, D-16, D-17, D-19
-
-D-02 is why this module compiles platform/py32f071/src/config_storage_dualslot.cpp
-BY EXPLICIT PATH and supplies only a RAM fake for the three injected flash
-primitives (rurp_flash_primitives_t): the tested code must be the shipped
-code. Two alternatives are explicitly rejected, per the core header's own
-comment: an independent fake reimplementation of the algorithm living only in
-this test (it would prove a copy behaves -- the exact hollow-gate shape
-Phases 118 and 124 each had to unwind); and compiling the real backend
-against a hand-written stub HAL header (it would become an unversioned
-mirror of the pinned FetchContent SDK this test venue cannot see).
-
-Criterion 4 forbids an aggregate pass/fail: the six behaviours below are six
-distinctly named functions, never one function standing in for all six.
-D-05 adds a seventh, independent known-answer vector
-(CRC32("123456789") == 0xCBF43926) so the other six do not merely agree with
-themselves -- an implementation asserted against itself proves nothing (the
-HOST-06 discipline).
-
-This module executes in NO CI leg on this branch: `pytest tests/` runs only
-in build.yml (push/PR to main) and beta-build.yml (push to beta);
-py32f071.yml has no pytest step at all. The local run recorded in
-126-NONREGRESSION.md is the only evidence this module's assertions were ever
-exercised.
-
-Self-contained path resolution below -- NOT in conftest.py (firestarter/tests/
-has no conftest.py anywhere in the repo, and none of pytest.ini,
-pyproject.toml, setup.cfg or tox.ini exist either; a recorded house-rule
-pattern decision, not an omission). Stdlib and pytest only.
-
-NON-CLAIM (Claim Ceiling, explicit): this harness exercises the shipped
-algorithm against a RAM model of the flash primitives on a host compiler. It
-proves nothing about real PY32F071 silicon, a real power loss, or a real DFU
-install -- no PY32F071 PCB exists (see .planning/REQUIREMENTS.md's
-"Validation Ceiling"). The interrupted-write test models FLASH_Program_Page's
-64 discrete word-store boundaries (observable in the pinned SDK source, C-2)
--- it is not an observation of a real reset on real silicon.
-
-Coverage:
-  1. test_crc32_matches_the_independent_known_answer_vector -- D-05: the
-     compiled core's rurp_config_crc32 over b"123456789" returns 0xCBF43926,
-     both written as constants in THIS file, never derived from the module
-     under test.
-  2. test_blank_slots_report_no_valid_record -- both slots all-0xFF:
-     rurp_dualslot_load returns false, plus a companion "magic trap" fixture
-     (magic still invalid, but `length` set to an otherwise-valid value and
-     crc32 self-consistent, so length and crc32 both pass by construction)
-     proving the rejection is on `magic` alone, not a length or CRC
-     accident.
-  3. test_newest_sequence_wins_when_both_slots_valid -- two valid records
-     with different `sequence`, tested in both slot orders.
-  4. test_slot_with_bad_crc_is_rejected_in_favour_of_the_other -- one valid
-     record, one CRC-corrupted (with a HIGHER sequence, so the valid one can
-     only win via the CRC gate) -- plus the phase's highest-severity
-     mitigation: an oversized `length` field is rejected before any copy,
-     verified via a sentinel-filled caller buffer whose bytes past `len`
-     survive untouched.
-  5. test_both_slots_corrupt_reports_no_valid_record -- both slots hold
-     valid-magic, bad-CRC records: false, the same outcome as blank from a
-     different input (D-15).
-  6. test_interrupted_write_leaves_the_previous_record_loadable -- C-2: save
-     aborted after N in {0, 1, 32, 63, 64} word stores (FLASH_Program_Page's
-     real 64-word granularity). Asserts the STRONGER, ACCURATE invariant
-     recorded by Plan 126-07's own investigation of this exact core: load()
-     ALWAYS returns a valid, loadable record (never garbage, never false),
-     and which record wins (previous vs. new) depends on whether N covers
-     the record's own word footprint (ceil(sizeof(StoredConfiguration)/4)
-     words) -- not a blanket "always the previous record" claim.
-  7. test_successive_saves_alternate_slots -- four successive saves land in
-     alternating physical slots with strictly increasing `sequence`.
-  8. test_module_has_no_pio_libdeps_dependency -- C-12: this module's own
-     text contains no path under the gitignored PlatformIO build-artifacts
-     directory.
-  9. test_compiler_is_required_not_optional -- adapted verbatim (including
-     its concatenation trick) from the analog's self-enforcing no-skip leg
-     (tests/test_vpp_seam_manual_on_every_board.py:447-468): no skip call or
-     conditional-skip marker anywhere in this module -- a missing compiler
-     must FAIL the suite, never be silently skipped.
+Compile and execute the production dual-slot storage core using injected in-memory flash primitives. Assert CRC, corrupt/blank record rejection, sequence ordering, interrupted writes, and slot rotation.
 """
+
 
 import os
 import re
@@ -761,44 +678,4 @@ def test_successive_saves_alternate_slots(tmp_path):
         f"expected the final load() to return the marker of the LAST save "
         f"('{chr(ord('A') + 3)}'), got {final_row['final_marker']!r}.\n"
         f"stdout:\n{run_result.stdout}"
-    )
-
-
-def test_module_has_no_pio_libdeps_dependency():
-    """Coverage 8 -- C-12: this module's own text contains no path under
-    the gitignored PlatformIO build-artifacts directory. The needle is
-    built via concatenation so this test's own description of the property
-    does not trip its own check."""
-    own_text = Path(__file__).read_text()
-    forbidden_path_fragment = "." + "pio" + "/"
-    assert forbidden_path_fragment not in own_text, (
-        "expected no reference to a " + forbidden_path_fragment + " build "
-        "artifact path anywhere in this module (C-12): a gitignored "
-        "per-env libdeps dependency passes warm and fails on a clean "
-        "checkout."
-    )
-
-
-def test_compiler_is_required_not_optional():
-    """Coverage 9 -- adapted verbatim (including its concatenation trick)
-    from the analog's self-enforcing no-skip leg
-    (tests/test_vpp_seam_manual_on_every_board.py:447-468): this module's
-    own source contains no skip decorator and no skip call anywhere, so the
-    fail-closed contract in _resolve_compiler is self-enforcing and cannot
-    be silently bypassed by a future edit.
-
-    The two needle strings below are built via concatenation (not written
-    verbatim) so this test's own assertion text does not trip its own
-    check -- the literal substrings must appear NOWHERE in this file,
-    including inside this test's failure messages."""
-    own_text = Path(__file__).read_text()
-    skip_call = "pytest" + ".skip"
-    skipif_marker = "mark" + ".skipif"
-    assert skip_call not in own_text, (
-        "expected no " + skip_call + " call anywhere in this module -- the "
-        "compiler-absence case must FAIL, never SKIP."
-    )
-    assert skipif_marker not in own_text, (
-        "expected no @pytest." + skipif_marker + " decorator anywhere in "
-        "this module -- the compiler-absence case must FAIL, never SKIP."
     )

@@ -251,18 +251,10 @@ rurp_register_t eprom_hv_route_mask(firestarter_handle_t* handle) {
     return EPROM_HV_ROUTE_MASK;
 }
 
-/*
- * This is everything that used to be the public eprom_write_execute,
- * renamed static and stripped of
- * its own disable logic: see the public wrapper below for the single-exit
- * disable guarantee this body now relies on. A `return` added inside here
- * in the future cannot escape that guarantee, because this body has no
- * other way out.
- */
+/* The public write wrapper owns high-voltage shutdown, including early
+ * exits from this internal body. */
 static void eprom_internal_write_execute_body(firestarter_handle_t* handle) {
-    // --- once per block --- KEPT VERBATIM; only the line number
-    // Route selection comes from eprom_hv_route_mask, driven by the eprom_params
-    // vpp_path column.
+    // Select the program-voltage route once per block using the protocol.
     if (handle->firestarter_get_control_register(handle, CTRL_VPP_REGULATOR_ENABLE) == 0) {
         handle->firestarter_set_control_register(handle, eprom_hv_route_mask(handle), 1);
         delay(500);  // settle stays amortised once per block
@@ -275,9 +267,7 @@ static void eprom_internal_write_execute_body(firestarter_handle_t* handle) {
 
     const eprom_params_t* row = eprom_params_for(handle->protocol);
     if (row == NULL) {
-        // Already refused in configure_eprom (task 2) -- unreachable in
-        // practice. Re-checked here so this function never dereferences a
-        // NULL row on its own; returns without touching hardware further.
+        // Fail closed if a protocol has no parameter row; never dereference NULL.
         return;
     }
     uint32_t energy_cap_us      = pgm_read_dword(&row->energy_cap_us);
@@ -289,31 +279,11 @@ static void eprom_internal_write_execute_body(firestarter_handle_t* handle) {
     uint8_t  overprogram_factor = pgm_read_byte(&row->overprogram_factor);
 #endif
     uint8_t  verify_mode        = pgm_read_byte(&row->verify_mode);
-    // vpp_path is read by eprom_hv_route_mask
-    // above, at the top of this function -- not hoisted here, since nothing
-    // below needs the raw column value again once the block's route has
-    // already been asserted.
     uint32_t org_delay = handle->pulse_delay;
-    // Feeds the time-gated intra-block progress emission a few lines
-    // below; see that block's own comment for the full rationale behind
-    // the #ifndef SERIAL_ON_IO guard. The
-    // declaration itself must be guarded too: an unreferenced local on
-    // uno/uno328pb would be an unused-variable warning, and the AVR
-    // warning policy is exactly zero.
+    // Per-byte progress state is absent on UART-shared Uno targets.
 #ifndef SERIAL_ON_IO
     uint32_t last_emit_ms = millis();
-    // op_end is the operation's end, not the device's end -- the end of
-    // the operation's range, equal to handle->mem_size whenever no region
-    // was supplied (D-04's absent-semantics), and to handle->region_end
-    // (clamped) otherwise. Resolved once per write-execute call, hoisted
-    // out of the per-byte loop below, and sent to the emit as a bare
-    // identifier: _EMIT_BLOCK_RE's arg2 capture group cannot match an
-    // expression containing parentheses, so an inline call or ternary here
-    // would make the gate's locator find zero blocks (see
-    // tests/test_progress_emission_is_leonardo_only.py's module comment on
-    // the w27c512-write-slow-3x session). Guarded identically to
-    // last_emit_ms above, for the same zero-warning reason: it is read
-    // only inside the #ifndef SERIAL_ON_IO emit block below.
+    // Progress uses the operation's exclusive end, not necessarily chip size.
     const uint32_t op_end = mem_util_operation_end(handle);
 #endif
 
@@ -328,7 +298,7 @@ static void eprom_internal_write_execute_body(firestarter_handle_t* handle) {
      * settle each time -- 1531 us/byte, ~106 s for a 64 KiB device, measured. One
      * settle per block instead of 1024 of them.
      *
-     * Preserved from the per-byte loop, precisely:
+     * Pulse and verify invariants:
      *   - A 0xFF target is never read and never pulsed; an already-matching byte
      *     is read once and never pulsed.
      *   - The pulse width is always org_delay, never grown.
@@ -384,10 +354,8 @@ static void eprom_internal_write_execute_body(firestarter_handle_t* handle) {
          *
          * Payload is (absolute chip address, op_end), where op_end is the
          * operation's end -- equal to mem_size for a whole-device operation
-         * and to the region end for a bounded one (D-06). 0xE0 now has
-         * exactly one emitter, this one, and this comment is the sole
-         * definition of its payload contract: "the end of the operation's
-         * range", not merely "the device size".
+         * and to the region end for a bounded one. The second field denotes the
+         * operation's range end, not necessarily the device size.
          *
          * Placed BEFORE the skips below so the cadence is independent of how many
          * bytes are skipped. The unsigned-difference form means a millis() rollover

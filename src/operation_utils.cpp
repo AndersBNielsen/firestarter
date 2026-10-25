@@ -14,6 +14,7 @@
 #include "logging_id.h"
 #include "messages.h"
 #include "rurp_shield.h"
+#include "timeout_utils.h"
 
 #define ERROR -1
 #define RETURN 0
@@ -92,8 +93,8 @@ bool op_execute_function(void (*callback)(firestarter_handle_t* handle), firesta
 }
 
 bool op_wait_for_ack(firestarter_handle_t* handle) {
-    unsigned long timeout = millis() + 1000;
-    while (millis() < timeout) {
+    const uint32_t started_ms = (uint32_t)millis();
+    while (!fs_timeout_expired(started_ms, 1000U, (uint32_t)millis())) {
         op_message_type msg_type = op_get_message(handle);
         if (msg_type == OP_MSG_ACK) {
             return true;
@@ -223,20 +224,6 @@ static inline int _execute_operation_house_keeping_func(void (*callback)(firesta
 
 static inline bool _single_step_operation_callback(firestarter_handle_t* handle) {
     int res = _execute_operation(handle->firestarter_operation_main, handle);
-    // This function used to carry a block here, keyed on the standalone
-    // blank-check command's ordinal: frames had to be emitted in THIS
-    // function, not inside the callback, because _execute_operation runs the
-    // callback in programmer mode and on the Uno rurp_log_id is
-    // com_mode-gated, so anything logged there was silently dropped. That
-    // block deferred the standalone blank-check command's not-blank error
-    // frame and progress frame out of programmer mode, and consumed the one
-    // host ack each deferred DATA frame needed to keep a 1:1 frame/ack
-    // balance -- a real defect once meant this loop emitted without ever
-    // consuming that ack, desyncing the port (surfaced as a reused
-    // MSG_ERR_EMPTY_INPUT; see git history for the fix). That command's wire
-    // ordinal was retired in 3.1.0, and the operations that remain on this
-    // path do their own acknowledgement waiting, so no replacement block is
-    // needed here.
     if (res == ERROR) {
         return false;
     }

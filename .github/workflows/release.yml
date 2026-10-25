@@ -28,8 +28,8 @@ jobs:
       contents: write
 
     steps:
-      # fetch-depth: 0: the tag check needs origin/main, version_from_git.py
-      # needs the tags, and the pytest tree walks git history.
+      # fetch-depth: 0 is needed for origin/main ancestry and version tags.
+      # Python behavioral tests do not inspect Git history.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0

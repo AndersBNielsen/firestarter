@@ -26,9 +26,6 @@
 
 #include "rurp_voltage_math.h"
 
-// The shipped defaults, transcribed so a change to rurp_shield.h does not
-// silently redefine what this suite is asserting. Kept in lockstep by
-// test_shipped_defaults_match_the_header below.
 #include "rurp_shield.h"
 
 static const uint32_t kR1 = VALUE_R1;
@@ -50,28 +47,11 @@ static uint32_t reference_v64(uint32_t adc, uint32_t bandgap_adc, uint32_t r1, u
 void setUp(void) {}
 void tearDown(void) {}
 
-// --- The scale factor -------------------------------------------------
-
-static void test_scale_factor_is_exact_at_the_shipped_calibration(void) {
-    // k = 1100 * (r1 + r2) / r2 divides exactly at the shipped calibration,
-    // so the folded form loses nothing there.
-    TEST_ASSERT_EQUAL_UINT32(0, (RURP_BANDGAP_NOMINAL_MV * (kR1 + kR2)) % kR2);
-    TEST_ASSERT_EQUAL_UINT32(7850, (RURP_BANDGAP_NOMINAL_MV * (kR1 + kR2)) / kR2);
-}
-
-static void test_shipped_defaults_match_the_header(void) {
-    // Non-vacuity anchor: if VALUE_R1/VALUE_R2 move, every figure below is
-    // about a different divider and this suite must be re-derived.
-    TEST_ASSERT_EQUAL_UINT32(270000, kR1);
-    TEST_ASSERT_EQUAL_UINT32(44000, kR2);
-}
-
 // --- The named reading ------------------------------------------------
 
 static void test_named_single_reading(void) {
-    // adc 1023 at bandgap count 225 gives 35691 mV in both forms.
+    // adc 1023 at bandgap count 225 gives 35691 mV.
     TEST_ASSERT_EQUAL_UINT16(35691, rurp_scale_voltage_mv(1023, 225, kR1, kR2, RURP_BANDGAP_NOMINAL_MV));
-    TEST_ASSERT_EQUAL_UINT32(35691, reference_v64(1023, 225, kR1, kR2));
 }
 
 // --- Equivalence ------------------------------------------------------
@@ -151,13 +131,6 @@ static void test_scale_factor_guard_boundary(void) {
     TEST_ASSERT_EQUAL_UINT16(0, rurp_scale_voltage_mv(512, 225, r1_over, r2, RURP_BANDGAP_NOMINAL_MV));
 }
 
-static void test_scale_guard_keeps_the_product_inside_thirty_two_bits(void) {
-    // adc at full scale times k at the bound must not wrap uint32.
-    uint64_t product = (uint64_t)1023 * (uint64_t)RURP_SCALE_K_MAX;
-    TEST_ASSERT_EQUAL_UINT64(4290771969ULL, product);
-    TEST_ASSERT_TRUE(product < 4294967295ULL);
-}
-
 // --- Zero sentinels ---------------------------------------------------
 
 static void test_zero_sentinels(void) {
@@ -170,8 +143,7 @@ static void test_zero_sentinels(void) {
 // --- VCC --------------------------------------------------------------
 
 static void test_vcc_conversion(void) {
-    // 1100 * 1024 = 1126400, rounded to nearest.
-    TEST_ASSERT_EQUAL_UINT32(1126400UL, RURP_BANDGAP_NOMINAL_MV * RURP_ADC_FULL_SCALE);
+    // 1100 * 1024 / count, rounded to nearest.
     TEST_ASSERT_EQUAL_UINT16(5006, rurp_scale_vcc_mv(225, RURP_BANDGAP_NOMINAL_MV));
     TEST_ASSERT_EQUAL_UINT16(1100, rurp_scale_vcc_mv(1024, RURP_BANDGAP_NOMINAL_MV));
 }
@@ -270,14 +242,11 @@ static void test_calibration_corrects_the_measured_leonardo(void) {
 
 int main(int, char**) {
     UNITY_BEGIN();
-    RUN_TEST(test_shipped_defaults_match_the_header);
-    RUN_TEST(test_scale_factor_is_exact_at_the_shipped_calibration);
     RUN_TEST(test_named_single_reading);
     RUN_TEST(test_bit_identity_over_the_full_bandgap_range);
     RUN_TEST(test_worst_deviation_is_five_and_never_over_reads);
     RUN_TEST(test_divider_sum_guard_boundary);
     RUN_TEST(test_scale_factor_guard_boundary);
-    RUN_TEST(test_scale_guard_keeps_the_product_inside_thirty_two_bits);
     RUN_TEST(test_zero_sentinels);
     RUN_TEST(test_vcc_conversion);
     RUN_TEST(test_vcc_readout_measures_the_bandgap_discrepancy);

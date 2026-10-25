@@ -39,9 +39,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # fetch-depth: 0 is REQUIRED. `pytest tests/` runs history gates that
-      # resolve fork SHAs, and version_from_git.py needs the tags. A shallow
-      # clone has neither.
+      # fetch-depth: 0 supplies tags required by version_from_git.py;
+      # Python behavioral tests do not depend on Git history.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0

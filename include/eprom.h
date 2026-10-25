@@ -42,23 +42,12 @@ extern "C" {
      * entirely on uno/uno328pb — see eprom.cpp for why. */
     #define EPROM_PROGRESS_EMIT_INTERVAL_MS 1000
 
-    /*
-     * Compiles the overprogram call site in (1) or out (0).
-     *
-     * DO NOT "TIDY" THIS AWAY, AND DO NOT MAKE IT UNIFORM ACROSS TARGETS.
-     * platformio.ini sets it to 0 for leonardo ONLY, to buy flash. The
-     * ATmega32U4 has a bootloader cliff at 28672 B, and platformio.ini
-     * raises the linker's reported ceiling to the chip's real 32768 B — so
-     * NOTHING warns if the build grows past the cliff. It simply links over
-     * the USB bootloader and the board loses bootloader entry.
-     *
-     * The difference is unobservable today: no chip_database.json row sets
-     * overprogram_factor, so eprom_overprogram_us returns 0 and no margin
-     * pulse is emitted on any target. Adding a row with a non-zero factor
-     * makes uno/uno328pb and leonardo genuinely diverge — revisit this
-     * define first and re-measure leonardo's headroom before setting it
-     * back to 1.
-     */
+    /* EPROM overprogram support differs by target to preserve bootloader space.
+ * Leonardo disables this call site because the ATmega32U4 USB bootloader
+ * begins at 28672 B, although the configured linker ceiling is 32768 B.
+ * No shipped chip row currently sets overprogram_factor, so this difference
+ * is inert until such a row is introduced. Re-measure the Leonardo firmware
+ * size before enabling the feature on that board. */
     #ifndef EPROM_OVERPROGRAM_SUPPORTED
     #define EPROM_OVERPROGRAM_SUPPORTED 1
     #endif
