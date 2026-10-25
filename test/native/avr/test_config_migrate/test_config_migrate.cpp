@@ -140,6 +140,81 @@ static void test_the_r_bands_keep_plausible_values_and_reject_others(void) {
     }
 }
 
+// The bytes another sketch left at the configuration offset, with a 0x00
+// where hardware_revision sits. 0x00 is REVISION_0, so keeping it would make
+// the foreign byte a live shield override.
+static void test_a_foreign_record_resets_every_field_and_the_override(void) {
+    rurp_configuration_t c;
+    memset(&c, 0, sizeof(c));
+    const char foreign[sizeof(c.version)] = {'\x12', 'A', 'b', '\x00', '\x7F', '\x01'};
+    memcpy(c.version, foreign, sizeof(c.version));
+    c.r1 = VALUE_R1_MIN;  // in band, but foreign, so not trusted
+    c.r2 = VALUE_R2_MAX;
+    c.hardware_revision = 0x00;
+    c.bandgap_mv = 1050;
+    TEST_ASSERT_TRUE(rurp_config_migrate(&c));
+    TEST_ASSERT_EQUAL_STRING(CONFIG_VERSION, c.version);
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0xFF, c.hardware_revision,
+                                    "a foreign byte must not become a shield override");
+    TEST_ASSERT_EQUAL_INT32(VALUE_R1, c.r1);
+    TEST_ASSERT_EQUAL_INT32(VALUE_R2, c.r2);
+    TEST_ASSERT_EQUAL_UINT16(RURP_BANDGAP_NOMINAL_MV, c.bandgap_mv);
+}
+
+// A store that held no record leaves the zero-initialised global behind, and
+// rurp_load_config() clears the version. hardware_revision 0 must not survive.
+static void test_an_unloaded_zeroed_record_gets_no_override(void) {
+    rurp_configuration_t c;
+    memset(&c, 0, sizeof(c));
+    TEST_ASSERT_TRUE(rurp_config_migrate(&c));
+    TEST_ASSERT_EQUAL_UINT8(0xFF, c.hardware_revision);
+    TEST_ASSERT_EQUAL_STRING(CONFIG_VERSION, c.version);
+    TEST_ASSERT_EQUAL_INT32(VALUE_R1, c.r1);
+    TEST_ASSERT_EQUAL_INT32(VALUE_R2, c.r2);
+    TEST_ASSERT_EQUAL_UINT16(RURP_BANDGAP_NOMINAL_MV, c.bandgap_mv);
+}
+
+static void test_only_ver_and_two_digits_is_a_firestarter_version(void) {
+    const char* foreign[] = {"VERxx", "VER7", "ver07", "XXXXX", "VER0A", ""};
+    for (unsigned i = 0; i < sizeof(foreign) / sizeof(foreign[0]); i++) {
+        rurp_configuration_t c = good();
+        memset(c.version, 0, sizeof(c.version));
+        strncpy(c.version, foreign[i], sizeof(c.version) - 1);
+        TEST_ASSERT_TRUE(rurp_config_migrate(&c));
+        TEST_ASSERT_EQUAL_UINT8_MESSAGE(0xFF, c.hardware_revision, foreign[i]);
+    }
+    // Non-vacuity: any other Firestarter version keeps the override.
+    const char* ours[] = {"VER03", "VER06", "VER99"};
+    for (unsigned i = 0; i < sizeof(ours) / sizeof(ours[0]); i++) {
+        rurp_configuration_t c = good();
+        strcpy(c.version, ours[i]);
+        TEST_ASSERT_TRUE(rurp_config_migrate(&c));
+        TEST_ASSERT_EQUAL_UINT8_MESSAGE(4, c.hardware_revision, ours[i]);
+    }
+}
+
+static void test_an_unknown_revision_resets_to_no_override(void) {
+    const uint8_t unknown[] = {REVISION_2_3 + 1, 0x80, REVISION_UNKNOWN};
+    for (unsigned i = 0; i < sizeof(unknown); i++) {
+        rurp_configuration_t c = good();
+        c.hardware_revision = unknown[i];
+        TEST_ASSERT_TRUE(rurp_config_migrate(&c));
+        TEST_ASSERT_EQUAL_UINT8(0xFF, c.hardware_revision);
+        TEST_ASSERT_EQUAL_INT32_MESSAGE(VALUE_R1, c.r1, "the other fields stay");
+    }
+}
+
+static void test_every_known_revision_is_kept(void) {
+    const uint8_t known[] = {REVISION_0, REVISION_1, REVISION_2_0,
+                             REVISION_2_1, REVISION_2_2, REVISION_2_3};
+    for (unsigned i = 0; i < sizeof(known); i++) {
+        rurp_configuration_t c = good();
+        c.hardware_revision = known[i];
+        TEST_ASSERT_FALSE(rurp_config_migrate(&c));
+        TEST_ASSERT_EQUAL_UINT8(known[i], c.hardware_revision);
+    }
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_a_current_config_is_left_alone);
@@ -149,5 +224,10 @@ int main(int, char**) {
     RUN_TEST(test_garbage_bandgap_from_an_old_layout_resets_to_nominal);
     RUN_TEST(test_a_real_calibration_is_never_discarded);
     RUN_TEST(test_the_r_bands_keep_plausible_values_and_reject_others);
+    RUN_TEST(test_a_foreign_record_resets_every_field_and_the_override);
+    RUN_TEST(test_an_unloaded_zeroed_record_gets_no_override);
+    RUN_TEST(test_only_ver_and_two_digits_is_a_firestarter_version);
+    RUN_TEST(test_an_unknown_revision_resets_to_no_override);
+    RUN_TEST(test_every_known_revision_is_kept);
     return UNITY_END();
 }
