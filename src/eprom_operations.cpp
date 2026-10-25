@@ -65,7 +65,12 @@ static inline bool _process_incoming_data(firestarter_handle_t* handle) {
     const uint32_t op_end = mem_util_operation_end(handle);
 
     // Transfer is pull-based: request the next chunk only when ready.
-    if (handle->address >= op_end) {
+    if (handle->address > op_end) {
+        LOG_ERROR_ID(MSG_ERR_OUT_OF_RANGE);
+        handle->response_code = RESPONSE_CODE_ERROR;
+        return false;
+    }
+    if (handle->address == op_end) {
         set_operation_to_done(handle);
         return true;
     }
@@ -91,8 +96,10 @@ static inline bool _process_incoming_data(firestarter_handle_t* handle) {
             set_operation_to_done(handle);
             return true;
         case OP_MSG_DATA:
-            if (handle->address + handle->data_size > op_end) {
+            if (handle->data_size > DATA_BUFFER_SIZE ||
+                !mem_util_range_fits(handle->address, handle->data_size, op_end)) {
                 LOG_ERROR_ID(MSG_ERR_OUT_OF_RANGE);
+                handle->response_code = RESPONSE_CODE_ERROR;
                 return false;
             }
             break;
@@ -110,6 +117,15 @@ static inline bool _process_incoming_data(firestarter_handle_t* handle) {
 
 // Returns true on success/continue, false on error.
 static inline bool _process_outgoing_data(firestarter_handle_t* handle) {
+    if (handle->address > handle->mem_size) {
+        LOG_ERROR_ID(MSG_ERR_OUT_OF_RANGE);
+        handle->response_code = RESPONSE_CODE_ERROR;
+        return false;
+    }
+    if (handle->address == handle->mem_size) {
+        set_operation_to_done(handle);
+        return true;
+    }
     if (!op_execute_function(handle->firestarter_operation_main, handle)) {
         return false;  // Error, so finished.
     }
@@ -126,6 +142,11 @@ static inline bool _process_outgoing_data(firestarter_handle_t* handle) {
         return false;
     }
 
+    if (handle->data_size > handle->mem_size - handle->address) {
+        LOG_ERROR_ID(MSG_ERR_OUT_OF_RANGE);
+        handle->response_code = RESPONSE_CODE_ERROR;
+        return false;
+    }
     handle->address += handle->data_size;
     if (handle->address >= handle->mem_size) {
         set_operation_to_done(handle);
