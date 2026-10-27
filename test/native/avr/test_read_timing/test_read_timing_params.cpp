@@ -774,6 +774,7 @@ void test_issue120_direct_write_accepts_valid_end_boundary(void) {
     TEST_ASSERT_EQUAL_UINT32(1, issue120_writes);
 }
 
+void run_json_hardening_tests(void);
 /* 25000 mV is the highest VPP in the chip database; one millivolt above it
  * is refused, and so is a value the field table saturates to 65535. */
 void test_vpp_mv_at_the_database_maximum_is_accepted(void) {
@@ -833,6 +834,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_issue120_read_end_is_empty_and_last_byte_is_read);
     RUN_TEST(test_issue120_direct_write_and_verify_refuse_out_of_range);
     RUN_TEST(test_issue120_direct_write_accepts_valid_end_boundary);
+    run_json_hardening_tests();
     RUN_TEST(test_vpp_mv_at_the_database_maximum_is_accepted);
     RUN_TEST(test_vpp_mv_above_the_database_maximum_is_refused);
     return UNITY_END();
