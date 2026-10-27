@@ -6,7 +6,7 @@
  *
  * Suite-specific extension:
  *   - HOST_STUBS_CUSTOM_READ_DATA_BUFFER: the test sets the byte that the
- *     DQ7 data poll in flash_util_verify_operation reads back.
+ *     DQ7 data poll in the flash waits reads back.
  */
 
 #include <stdint.h>

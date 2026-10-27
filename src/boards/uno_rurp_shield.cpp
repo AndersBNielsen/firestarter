@@ -11,10 +11,9 @@
 #include "rurp_register_utils.h"
 
 #include "rurp_serial_utils.h"
+#include "deferred_log.h"
 
 #define USER_BUTTON 0x10             // USER BUTTON
-
-constexpr int INPUT_RESOLUTION = 1023;
 
 bool com_mode = true;
 
@@ -24,19 +23,9 @@ bool com_mode = true;
 // frame mid-operation would corrupt the programming pulse -- hence the com_mode
 // gate below. Dropping those frames instead loses every operation-emitted error
 // and progress frame, and the host times out with nothing. So they are BUFFERED
-// and flushed once communication mode is restored.
-//
-// Sizing: DEBUG frames compile out in production and an operation emits at most
-// ~1-2 critical frames per programmer-mode window, so 4 has headroom. Narrow
-// frames only -- the wide MSG_DATA_CHUNK path runs in communication mode.
-#define DEFERRED_LOG_MAX 4
-#define DEFERRED_PARAM_MAX 8  // widest narrow frame (U32_U32 / U16x4 / progress) = 8 bytes
-static uint8_t deferred_count = 0;
-static struct {
-    uint8_t id;
-    uint8_t len;
-    uint8_t params[DEFERRED_PARAM_MAX];
-} deferred_log[DEFERRED_LOG_MAX];
+// and flushed once communication mode is restored. deferred_log.h has the
+// sizing and the rule that keeps an error frame when the buffer is full.
+static deferred_log_t deferred_log;
 
 
 void rurp_board_setup() {
@@ -44,8 +33,10 @@ void rurp_board_setup() {
     // PB0-3 are register select lines, PB5 is Chip Enable.
     // PB4 is User Button input.
     // PB6 is a crystal pin on Uno and must not be configured as GPIO.
+    // Write the port latch first, so CE and OE are already high (chip disabled,
+    // outputs off) when the pins become outputs, and the button pull-up is set.
+    PORTB = USER_BUTTON | OUTPUT_ENABLE | CHIP_ENABLE;
     DDRB = LEAST_SIGNIFICANT_BYTE | MOST_SIGNIFICANT_BYTE | CONTROL_REGISTER | OUTPUT_ENABLE | CHIP_ENABLE;
-    PORTB = USER_BUTTON;
 
     rurp_chip_disable();
     rurp_chip_input();
@@ -75,10 +66,11 @@ void rurp_set_communication_mode() {
     com_mode = true;
 
     // Flush frames only after UART is restored and PORTD is safe to drive.
-    for (uint8_t i = 0; i < deferred_count; i++) {
-        _firestarter_emit_frame(deferred_log[i].id, deferred_log[i].params, deferred_log[i].len);
+    for (uint8_t i = 0; i < deferred_log.count; i++) {
+        const deferred_frame_t* frame = &deferred_log.frames[i];
+        _firestarter_emit_frame(frame->id, frame->params, frame->len);
     }
-    deferred_count = 0;
+    deferred_log.count = 0;
 }
 
 void rurp_set_programmer_mode() {
@@ -97,20 +89,14 @@ void rurp_log_id(uint8_t id, const uint8_t* params, uint8_t param_count) {
         return;
     }
     // Programmer mode: the wire is the data bus — defer instead of dropping, then
-    // flush in rurp_set_communication_mode (#transport-protocol-verify).
+    // flush in rurp_set_communication_mode. A frame with more parameters than a
+    // slot holds is dropped: truncating it would send a valid-CRC frame with wrong
+    // data. When the buffer is full an error frame replaces an INFO or WARN frame;
+    // a frame that still does not fit is dropped rather than emitted on the active bus.
     if (param_count > DEFERRED_PARAM_MAX) {
-        param_count = DEFERRED_PARAM_MAX;  // truncate; no narrow frame exceeds this
+        return;
     }
-    if (deferred_count < DEFERRED_LOG_MAX) {
-        deferred_log[deferred_count].id = id;
-        deferred_log[deferred_count].len = param_count;
-        for (uint8_t i = 0; i < param_count; i++) {
-            deferred_log[deferred_count].params[i] = params[i];
-        }
-        deferred_count++;
-    }
-    // else: buffer full (should not happen in production — see DEFERRED_LOG_MAX);
-    // drop excess rather than risk emitting on the active bus.
+    deferred_log_push(&deferred_log, id, params, param_count);
 }
 
 // Uno override for wide MSG_DATA_CHUNK frames.

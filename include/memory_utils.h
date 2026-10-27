@@ -57,14 +57,6 @@ void mem_util_report_voltage(firestarter_handle_t* handle, uint16_t measured_mv,
                               uint16_t expected_mv, uint8_t msg_id, uint8_t response_code);
 
 /*
- * Retires four chip-ID mismatch blocks across four translation units
- * (flash_utils.cpp, flash_intel.cpp, eprom.cpp, eeprom_28c.cpp). Definition
- * lives in src/proms/memory.cpp. warn_only is a parameter, not an internal
- * is_flag_set(FLAG_FORCE) check, because eprom.cpp's standalone
- * CMD_CHECK_CHIP_ID path must keep refusing unconditionally regardless of
- * --force -- do not fold the force test into this helper.
- */
-/*
  * Refuse a voltage-gated operation when the stored divider calibration cannot
  * be evaluated. Returns true when it refused, having emitted
  * MSG_ERR_CALIBRATION and set RESPONSE_CODE_ERROR.
@@ -72,13 +64,12 @@ void mem_util_report_voltage(firestarter_handle_t* handle, uint16_t measured_mv,
  * Call this BEFORE asserting any high-voltage bit. Without it, an unusable
  * calibration makes rurp_read_voltage_mv return 0, which the low-side test
  * reads as "the rail is low" -- a WARNING, so the write proceeds against a
- * rail nothing has measured. See
- * agent-os/standards/firmware/fail-closed-refusals.md.
+ * rail nothing has measured.
  */
 bool mem_util_refuse_bad_calibration(firestarter_handle_t* handle);
 
-/* Apply a common measured-VPP acceptance window and report the matching
- * error code for both EPROM and Intel flash paths. */
+/* Apply the common measured-VPP acceptance window and report the matching
+ * error code. Shared by the EPROM, Intel flash and AT28C chip-ID paths. */
 void mem_util_check_vpp_window(firestarter_handle_t* handle, uint16_t vpp_mv);
 
 /*
@@ -90,6 +81,12 @@ void mem_util_check_vpp_window(firestarter_handle_t* handle, uint16_t vpp_mv);
  */
 void mem_util_warn_if_uncalibrated(firestarter_handle_t* handle);
 
+/*
+ * Report a chip-ID mismatch. warn_only is a parameter, not an internal
+ * is_flag_set(FLAG_FORCE) check, because eprom.cpp's standalone
+ * CMD_CHECK_CHIP_ID path must keep refusing regardless of --force. Definition
+ * lives in src/proms/memory.cpp.
+ */
 void mem_util_report_chip_id(firestarter_handle_t* handle, uint16_t actual, bool warn_only);
 
 static inline bool using_p1_as_vpp(const firestarter_handle_t* handle) {

@@ -118,15 +118,16 @@ the code:
    `configure_eprom()`. The UV-EPROM family.
 6. `PROTO_SRAM_32PIN` (`0x0E`), `PROTO_SRAM_24PIN` (`0x27`), `PROTO_SRAM_28PIN` (`0x28`) and
    `PROTO_SRAM_32PIN_NVRAM` (`0x29`) → `configure_sram()`. This arm never enables the VPP regulator.
-7. `0x11`, `0x2A`, `0x2B` and `0x2C` → `configure_not_implemented()`. These are FWH (`0x11`) and
-   GAL/PLD (`0x2A`, `0x2B`, `0x2C`). RURP hardware cannot drive them. They have no `PROTO_` token,
-   so the code uses raw hex.
-8. All other values → `configure_not_implemented()`. This is one unconditional call at the end of
-   the function. It catches `protocol == 0`, `PROTO_EEPROM_8051BUS` (`0x34`) and each unknown value.
-   It returns `MSG_ERR_PROTOCOL_NOT_IMPLEMENTED` (`0xBB`) and changes no hardware state.
+7. All other values → `configure_not_implemented()`. This catches FWH (`0x11`) and GAL/PLD (`0x2A`,
+   `0x2B`, `0x2C`), which RURP hardware cannot drive, `protocol == 0`, `PROTO_EEPROM_8051BUS`
+   (`0x34`) and each unknown value. It returns `MSG_ERR_PROTOCOL_NOT_IMPLEMENTED` (`0xBB`) and
+   changes no hardware state.
 
-**Fail-closed rule.** Steps 7 and 8 send each named-infeasible, unknown or zero value to
-`configure_not_implemented()`. No other dispatch path exists for them.
+`configure_memory` selects the handler before it touches the bus. It writes address 0 to the
+address registers only for a protocol that steps 1 to 6 accept, and then calls the handler.
+
+**Fail-closed rule.** Step 7 sends each named-infeasible, unknown or zero value to
+`configure_not_implemented()`, before any register write. No other dispatch path exists for them.
 
 ### Algorithm Handlers
 
@@ -140,11 +141,11 @@ are in `src/proms/`.
 | `0x0B` | `PROTO_EPROM_24PIN` | `eprom.cpp` | Direct VPE route | 24-pin UV-EPROM. Refer to the 27C section. |
 | `0x0D` | `PROTO_EEPROM_PARALLEL` | `eeprom_28c.cpp` | None (5V) | SDP disable, then DQ7 page poll. Refer to the 0x0D section. |
 | `0x0E`, `0x27`, `0x28`, `0x29` | `PROTO_SRAM_32PIN`, `_24PIN`, `_28PIN`, `_32PIN_NVRAM` | `sram.cpp` | None (5V) | Generic read and write. |
-| `0x06` | `PROTO_FLASH_NOR_UNLOCK` | `flash_nor_unlock.cpp` | None (5V) | AMD unlock, sector erase. |
-| `0x05` | `PROTO_FLASH_5V_PAGE` | `flash_5v_page.cpp` | None (5V) | Page write, then DQ7 poll. |
+| `0x06` | `PROTO_FLASH_NOR_UNLOCK` | `flash_nor_unlock.cpp` | None (5V) | AMD unlock. Chip erase, or sector erase at a non-zero address. Each program and erase waits on DQ7. A write at a non-zero address does not erase. |
+| `0x05` | `PROTO_FLASH_5V_PAGE` | `flash_5v_page.cpp` | None (5V) | Page write, then DQ7 poll. Software chip erase. |
 | `0x35` | `PROTO_PHANTOM_0x35` | `flash_5v_page.cpp` | None (5V) | Phantom. No database chips. The upstream label names an ITE EC MCU. |
 | `0x39` | `PROTO_PHANTOM_0x39` | `flash_5v_page.cpp` | None (5V) | Phantom. No database chips. No upstream algorithm constant exists. |
-| `0x10` | `PROTO_FLASH_INTEL` | `flash_intel.cpp` | Regulator on pin 1 (`CTRL_VPP_P1_ENABLE`) | Command register, status-register poll. |
+| `0x10` | `PROTO_FLASH_INTEL` | `flash_intel.cpp` | Regulator on pin 1 (`CTRL_VPP_P1_ENABLE`), routed only after the rail measures in the window | Command register, status-register poll. |
 | `0x34` | `PROTO_EEPROM_8051BUS` | none | None (5V) | PCB-blocked. The terminal fail-closed call catches it. |
 
 ### The three 27C rows (`0x07`, `0x08`, `0x0B`)
@@ -182,13 +183,17 @@ Two limits apply:
 - **`leonardo` and native only.** On `SERIAL_ON_IO` targets (`uno`, `uno328pb`) the send and its
   `last_emit_ms` state compile out. This is a hardware limit:
   1. `rurp_set_programmer_mode()` stops the UART for the full programmer-mode window.
-  2. The Uno `rurp_log_id` override then holds frames in a 4-slot buffer.
-  3. When that buffer is full, the next frame is lost without an error.
-  4. A lost `MSG_ERR_MAX_PULSES` frame changes a program failure into a host transport timeout.
+  2. The Uno `rurp_log_id` override then holds frames in a 4-slot buffer (`include/deferred_log.h`).
+  3. When that buffer is full, an error, control or data frame replaces the newest INFO or WARN
+     frame. A new INFO or WARN frame, or any frame when no INFO or WARN frame is held, is lost
+     without an error.
+  4. A progress frame per byte would fill the buffer with frames that must not be lost, so a later
+     `MSG_ERR_MAX_PULSES` frame could still be lost and a program failure would become a host
+     transport timeout.
 
-  No behavior test currently covers this board-specific transport limit. Native tests do not
-  compile `src/boards/uno_rurp_shield.cpp`, and the capture stub lacks its `com_mode` gate.
-  Verify the behavior on the target board before changing this path.
+  The `test_messages` suite tests the buffer rule in `deferred_log.h`. Native tests do not compile
+  `src/boards/uno_rurp_shield.cpp`, and the capture stub lacks its `com_mode` gate. Verify the
+  behavior on the target board before changing this path.
 
 Per-row differences:
 
@@ -213,8 +218,9 @@ pass.
 **Error IDs per row:**
 
 - `MSG_ERR_MAX_PULSES` (`0xBD`) can occur on all three rows.
-- `MSG_ERR_ENERGY_CAP` (`0xBE`) and the pre-flight refusal `MSG_ERR_PULSE_TOO_WIDE` (`0xAE`) need
-  `energy_cap_us > 0`. They can occur on `0x0B` only.
+- `MSG_ERR_ENERGY_CAP` (`0xBE`) needs `energy_cap_us > 0`. It can occur on `0x0B` only.
+- The pre-flight refusal `MSG_ERR_PULSE_TOO_WIDE` (`0xAE`) can occur on all three rows for a pulse
+  above `EPROM_PULSE_MAX_US` (65535µs). On `0x0B` it also occurs for a pulse above `energy_cap_us`.
 
 **The `0x0B` energy cap.** Each shipped pulse width divides 50000µs exactly. 200µs, 500µs and 1000µs
 give 250, 100 and 50 pulses. With an arbitrary `--pulse-us` value `w`, the total at failure is
@@ -356,10 +362,11 @@ field at the end of the ack therefore needs no catalog edit and no codegen run.
 
 **`--pulse-us` and the wire.** The host option `firestarter write --pulse-us N` accepts `1..65535`.
 That range copies minipro, where `-o pulse=N` is a `uint16`. **It is not a wire limit.**
-The frame carries `pulse-delay` as a `uint32_t` with no clamp. The firmware
-limit is the pre-flight refusal `MSG_ERR_PULSE_TOO_WIDE` (`0xAE`) in `configure_eprom`. It uses
-`energy_cap_us` and runs before any high voltage is on. Only the `0x0B` row can trigger it, so the
-host copies no table value to prevent it.
+The frame carries `pulse-delay` as a `uint32_t` with no clamp. The firmware limit is the
+pre-flight refusal `MSG_ERR_PULSE_TOO_WIDE` (`0xAE`) in `configure_eprom`. It runs before any high
+voltage is on. It refuses a pulse above `EPROM_PULSE_MAX_US` (65535µs) on every row, and a pulse
+above `energy_cap_us` on the `0x0B` row. The host range never reaches the first limit, so the host
+copies no table value to prevent it.
 
 ### Key Files
 

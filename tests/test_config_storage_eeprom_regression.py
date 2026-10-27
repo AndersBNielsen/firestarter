@@ -39,15 +39,9 @@ _SIZEOF_RE = re.compile(r"^SIZEOF (\d+)$")
 def _resolve_compiler():
     """Resolve the host C++ compiler, fail-closed.
 
-    Deliberately never bypassed via any decorator or runtime call that would
-    mark this outcome as skipped, anywhere in this module: doing so would
-    recreate the exact BASE-02/BASE-03 absence-proxy failure class this
-    milestone's Phase 123 removed. If $CXX (or 'g++') cannot be resolved via
-    shutil.which, this raises via a plain assert, which the test runner
-    reports as a FAILURE, never a skipped outcome. This module's harness
-    runs in NO CI leg on this branch -- the local run is the only evidence,
-    which makes the fail-closed contract here even more load-bearing than in
-    the CI-covered precedent (tests/test_vpp_seam_manual_on_every_board.py).
+    If $CXX (or 'g++') cannot be resolved via shutil.which, this raises via a
+    plain assert, which the test runner reports as a FAILURE, never a skipped
+    outcome. build.yml runs this module through `pytest tests/`.
     """
     compiler = shutil.which(os.environ.get("CXX", "g++"))
     assert compiler is not None, (
