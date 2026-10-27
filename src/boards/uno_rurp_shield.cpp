@@ -15,8 +15,6 @@
 
 #define USER_BUTTON 0x10             // USER BUTTON
 
-constexpr int INPUT_RESOLUTION = 1023;
-
 bool com_mode = true;
 
 // Deferred-log buffer.
@@ -35,8 +33,10 @@ void rurp_board_setup() {
     // PB0-3 are register select lines, PB5 is Chip Enable.
     // PB4 is User Button input.
     // PB6 is a crystal pin on Uno and must not be configured as GPIO.
+    // Write the port latch first, so CE and OE are already high (chip disabled,
+    // outputs off) when the pins become outputs, and the button pull-up is set.
+    PORTB = USER_BUTTON | OUTPUT_ENABLE | CHIP_ENABLE;
     DDRB = LEAST_SIGNIFICANT_BYTE | MOST_SIGNIFICANT_BYTE | CONTROL_REGISTER | OUTPUT_ENABLE | CHIP_ENABLE;
-    PORTB = USER_BUTTON;
 
     rurp_chip_disable();
     rurp_chip_input();
@@ -89,9 +89,13 @@ void rurp_log_id(uint8_t id, const uint8_t* params, uint8_t param_count) {
         return;
     }
     // Programmer mode: the wire is the data bus — defer instead of dropping, then
-    // flush in rurp_set_communication_mode. When the buffer is full an error
-    // frame replaces an INFO or WARN frame; a frame that still does not fit is
-    // dropped rather than emitted on the active bus.
+    // flush in rurp_set_communication_mode. A frame with more parameters than a
+    // slot holds is dropped: truncating it would send a valid-CRC frame with wrong
+    // data. When the buffer is full an error frame replaces an INFO or WARN frame;
+    // a frame that still does not fit is dropped rather than emitted on the active bus.
+    if (param_count > DEFERRED_PARAM_MAX) {
+        return;
+    }
     deferred_log_push(&deferred_log, id, params, param_count);
 }
 

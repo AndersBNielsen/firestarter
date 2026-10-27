@@ -4,15 +4,12 @@
  *
  * Permission is hereby granted under MIT license.
  *
- * rurp_config_migrate: the per-field migration that replaced the
- * version-gated wipe.
+ * rurp_config_migrate: the per-field configuration migration.
  *
- * Two defects motivate every case below. The old policy reset
- * hardware_revision on any version change, destroying an operator's shield
- * override. And it only ever ran on a version MISMATCH, so a board carrying
- * the pre-Phase-44 r1 of 1000 under a matching version string kept that value
- * forever -- the stranding defect in
- * .planning/todos/pending/config-version-not-bumped-strands-stale-eeprom-calibration.md
+ * The migration runs on every load, not only on a version mismatch. It keeps
+ * the operator's hardware_revision override across a version change and
+ * replaces each out-of-band field with its default. The return value is true
+ * when the record changed and must be written back.
  */
 
 #include <unity.h>
@@ -50,8 +47,8 @@ static void test_a_current_config_is_left_alone(void) {
 }
 
 static void test_the_stranded_r1_is_corrected(void) {
-    // The stranding defect, reproduced: version string ALREADY current, so the
-    // old version gate could never have reached this value.
+    // The version string is already current, and the migration still corrects
+    // an out-of-band r1.
     rurp_configuration_t c = good();
     c.r1 = 1000;
     TEST_ASSERT_TRUE(rurp_config_migrate(&c));
@@ -59,8 +56,7 @@ static void test_the_stranded_r1_is_corrected(void) {
 }
 
 static void test_an_operator_override_survives_a_version_bump(void) {
-    // The regression the old wipe caused. An old version string must migrate
-    // the version WITHOUT touching hardware_revision.
+    // An old version string must migrate the version WITHOUT touching hardware_revision.
     rurp_configuration_t c = good();
     strcpy(c.version, "VER06");
     c.hardware_revision = 4;
@@ -118,7 +114,7 @@ static void test_the_r_bands_keep_plausible_values_and_reject_others(void) {
         const auto& c1 = r1_cases[i];
         rurp_configuration_t c = good();
         c.r1 = c1.v;
-        rurp_config_migrate(&c);
+        TEST_ASSERT_EQUAL(!c1.kept, rurp_config_migrate(&c));
         if (c1.kept) {
             TEST_ASSERT_EQUAL_INT32(c1.v, c.r1);
         } else {
@@ -133,7 +129,7 @@ static void test_the_r_bands_keep_plausible_values_and_reject_others(void) {
         const auto& c2 = r2_cases[i];
         rurp_configuration_t c = good();
         c.r2 = c2.v;
-        rurp_config_migrate(&c);
+        TEST_ASSERT_EQUAL(!c2.kept, rurp_config_migrate(&c));
         if (c2.kept) {
             TEST_ASSERT_EQUAL_INT32(c2.v, c.r2);
         } else {
@@ -294,6 +290,14 @@ static void test_an_out_of_band_config_frame_is_refused_not_corrected(void) {
         "{\"state\":14,\"r1\":300000,\"r2\":60000}",
         // A field the parser does not know refuses the frame part-way.
         "{\"state\":14,\"r1\":300000,\"zz\":1}",
+        // A negative or oversized number is refused, never read as 0 or
+        // wrapped into a value that passes the band check.
+        "{\"state\":14,\"rev\":-1}",
+        "{\"state\":14,\"rev\":256}",
+        "{\"state\":14,\"r1\":-300000}",
+        "{\"state\":14,\"r1\":4295267296}",
+        "{\"state\":14,\"r2\":4295017296}",
+        "{\"state\":14,\"bg\":66636}",
     };
     for (unsigned i = 0; i < sizeof(refused) / sizeof(refused[0]); i++) {
         rurp_configuration_t live = good();
@@ -326,6 +330,41 @@ static void test_every_frame_the_host_sends_is_accepted(void) {
     }
 }
 
+#if RURP_HAS_BANDGAP_CAL
+// The measured supply voltage feeds the bandgap back-solve. A value above
+// 10 V cannot be a supply reading, and a large one would overflow the
+// back-solve product, so the frame is refused.
+static void test_a_calibration_frame_with_an_implausible_vcc_is_refused(void) {
+    const char* refused[] = {
+        "{\"state\":14,\"vcc\":10001}",
+        "{\"state\":14,\"vcc\":4199999}",
+        "{\"state\":14,\"vcc\":-5000}",
+    };
+    for (unsigned i = 0; i < sizeof(refused) / sizeof(refused[0]); i++) {
+        jsmntok_t tokens[NUMBER_JSNM_TOKENS];
+        jsmn_parser parser;
+        jsmn_init(&parser);
+        int token_count = jsmn_parse(&parser, refused[i], strlen(refused[i]), tokens, NUMBER_JSNM_TOKENS);
+        TEST_ASSERT_TRUE_MESSAGE(token_count > 0, refused[i]);
+        firestarter_handle_t handle = {};
+        rurp_configuration_t copy = good();
+        TEST_ASSERT_TRUE_MESSAGE(json_parse_config(refused[i], tokens, token_count, &copy, &handle) < 0,
+                                 refused[i]);
+    }
+
+    const char* ok = "{\"state\":14,\"vcc\":5000}";
+    jsmntok_t tokens[NUMBER_JSNM_TOKENS];
+    jsmn_parser parser;
+    jsmn_init(&parser);
+    int token_count = jsmn_parse(&parser, ok, strlen(ok), tokens, NUMBER_JSNM_TOKENS);
+    firestarter_handle_t handle = {};
+    rurp_configuration_t copy = good();
+    int res = json_parse_config(ok, tokens, token_count, &copy, &handle);
+    TEST_ASSERT_TRUE(res >= 0 && (res & JSON_CFG_CALIBRATE));
+    TEST_ASSERT_EQUAL_INT32(5000, json_config_measured_vcc_mv());
+}
+#endif
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_a_current_config_is_left_alone);
@@ -344,5 +383,8 @@ int main(int, char**) {
     RUN_TEST(test_a_refused_commit_leaves_the_live_config_unchanged);
     RUN_TEST(test_an_out_of_band_config_frame_is_refused_not_corrected);
     RUN_TEST(test_every_frame_the_host_sends_is_accepted);
+#if RURP_HAS_BANDGAP_CAL
+    RUN_TEST(test_a_calibration_frame_with_an_implausible_vcc_is_refused);
+#endif
     return UNITY_END();
 }

@@ -16,6 +16,7 @@
 #include "rurp_shield.h"
 #include "rurp_pinout.h"
 #include "operation_utils.h"
+#include "proto_constants.h"
 
 
 void eprom_erase_execute(firestarter_handle_t* handle);
@@ -33,7 +34,7 @@ void eprom_internal_check_chip_id(firestarter_handle_t* handle, uint8_t error_co
 void eprom_internal_erase(firestarter_handle_t* handle);
 
 void eprom_internal_set_control_register(firestarter_handle_t* handle, rurp_register_t bit, bool cmd);
-void (*ep_set_control_register)(struct firestarter_handle*, rurp_register_t, bool);
+static void (*ep_set_control_register)(struct firestarter_handle*, rurp_register_t, bool);
 
 void eprom_generic_init(firestarter_handle_t* handle);
 
@@ -62,9 +63,9 @@ void configure_eprom(firestarter_handle_t* handle) {
     // Set default pulse_delay from protocol when Python doesn't supply one
     if (handle->pulse_delay == 0) {
         switch (handle->protocol) {
-            case 0x08: handle->pulse_delay = 100;  break;  // EPROM_QUICK: 100µs
-            case 0x0B: handle->pulse_delay = 500;  break;  // EPROM_LEGACY: 500µs
-            default:   handle->pulse_delay = 1000; break;  // EPROM_STD: 1ms
+            case PROTO_EPROM_32PIN: handle->pulse_delay = 100;  break;  // 100µs
+            case PROTO_EPROM_24PIN: handle->pulse_delay = 500;  break;  // 500µs
+            default:                handle->pulse_delay = 1000; break;  // 1ms
         }
     }
 
@@ -83,16 +84,16 @@ void configure_eprom(firestarter_handle_t* handle) {
         return;
     }
 
-    // Refusal 2: a pulse wider than this row's program-energy budget is refused
-    // pre-flight, before any high voltage is enabled, and NEVER silently clamped
-    // -- clamping emits a pulse whose width no longer matches what the caller
-    // asked for, then reports a verify failure: a misconfiguration wearing a
-    // silicon-failure costume.
+    // Refusal 2: a pulse wider than EPROM_PULSE_MAX_US, or wider than this row's
+    // program-energy budget, is refused pre-flight, before any high voltage is
+    // enabled, and never silently clamped -- a clamped pulse no longer matches
+    // what the caller asked for, and then reports as a verify failure.
     //
     // energy_cap_us > 0 is mandatory: 0 means UNCAPPED, not "cap at zero". An
     // unguarded compare refuses every 0x07/0x08 pulse -- both ship 0.
     uint32_t energy_cap_us = pgm_read_dword(&row->energy_cap_us);
-    if (energy_cap_us > 0 && handle->pulse_delay > energy_cap_us) {
+    if (handle->pulse_delay > EPROM_PULSE_MAX_US ||
+        (energy_cap_us > 0 && handle->pulse_delay > energy_cap_us)) {
         LOG_ERROR_ID_U32(MSG_ERR_PULSE_TOO_WIDE, handle->pulse_delay);
         handle->response_code = RESPONSE_CODE_ERROR;
         return;
@@ -114,25 +115,22 @@ void eprom_erase_execute(firestarter_handle_t* handle) {
 }
 
 /*
- * DEFENSIVE, not corrective: neither exit of this body leaks a route today.
- * It is wrapped anyway because eprom_internal_erase's assert is the only
- * write-path code that raises A9 together with VPE, and that assert's safety
- * rests on there being no `return` between it and its own clear -- a property
- * a future edit could otherwise break silently.
+ * Wrapped so the single-exit clear covers every exit of this body.
+ * eprom_internal_erase's assert is the only write-path code that raises A9
+ * together with VPE, and that assert's safety rests on there being no `return`
+ * between it and its own clear.
  */
 static void eprom_internal_write_init_body(firestarter_handle_t* handle) {
-    if(!is_operation_in_progress(handle)){
-        eprom_generic_init(handle);
-        if (handle->response_code == RESPONSE_CODE_ERROR) {
-            return;
-        }
+    eprom_generic_init(handle);
+    if (handle->response_code == RESPONSE_CODE_ERROR) {
+        return;
+    }
 
-        if (is_flag_set(FLAG_CAN_ERASE)) {
-            if (!is_flag_set(FLAG_SKIP_ERASE)) {
-                eprom_internal_erase(handle);
-            } else {
-                LOG_INFO_ID(MSG_INFO_SKIPPING_ERASE);
-            }
+    if (is_flag_set(FLAG_CAN_ERASE)) {
+        if (!is_flag_set(FLAG_SKIP_ERASE)) {
+            eprom_internal_erase(handle);
+        } else {
+            LOG_INFO_ID(MSG_INFO_SKIPPING_ERASE);
         }
     }
 }
@@ -152,10 +150,10 @@ void eprom_write_init(firestarter_handle_t* handle) {
 }
 
 /*
- * See include/eprom.h for the full rationale. factor == 0 (every shipped row) always yields 0, so the
- * per-byte loop's overprogram call is inert on every live protocol; the
- * clamp below yields 0 for cap_us == 0 without a special case, since a
- * positive product always compares greater than a zero cap.
+ * See include/eprom.h for the rationale. factor == 0 (every shipped row) always
+ * yields 0, so the per-byte loop's overprogram call is inert on every live
+ * protocol; the clamp below yields 0 for cap_us == 0 without a special case,
+ * since a positive product always compares greater than a zero cap.
  */
 uint32_t __attribute__((noinline)) eprom_overprogram_us(uint8_t pulse_count, uint32_t pulse_us, uint8_t factor, uint32_t cap_us) {
     if (factor == 0) {
@@ -169,9 +167,7 @@ uint32_t __attribute__((noinline)) eprom_overprogram_us(uint8_t pulse_count, uin
  * The single place a per-byte program-budget failure is reported: disables the
  * VPP route, packs a 4-byte big-endian {addr_hi, addr_mid, addr_lo,
  * pulse_count} payload matching MSG_ERR_MAX_PULSES / MSG_ERR_ENERGY_CAP, emits
- * it, and sets response_code. The wrapper below covers the disable for every
- * other error exit; this function additionally emits the two messages, which
- * the wrapper does not.
+ * it, and sets response_code.
  */
 static void eprom_internal_report_budget_failure(firestarter_handle_t* handle, uint32_t address, uint8_t pulse_count, uint8_t msg_id) {
     handle->firestarter_set_control_register(handle, EPROM_HV_ALL_OFF_MASK, 0);
@@ -186,8 +182,8 @@ static void eprom_internal_report_budget_failure(firestarter_handle_t* handle, u
 
 /*
  * ONE program pulse, with the program-voltage route asserted for its duration
- * and released before the caller's verify read. include/eprom.h's
- * EPROM_VPP_SETUP_US comment has the per-pulse constraint and the values.
+ * and released before the caller's verify read. include/eprom.h has the setup
+ * and hold values.
  *
  * Name CTRL_VPE_ENABLE here, never CTRL_VPP_P1_ENABLE:
  * eprom_internal_set_control_register substitutes P1 for VPE when
@@ -220,9 +216,9 @@ static void eprom_internal_program_pulse(firestarter_handle_t* handle, uint32_t 
  * Resolution order, exactly:
  *   1. FLAG_VPE_AS_VPP -> CTRL_VPP_REGULATOR_ENABLE. Checked FIRST because it
  *      is a human override (25V NMOS parts, the manual-pot workflow) set by
- *      no database entry, so it wins over the table with no table read. It
- *      is no longer the only route to the undropped rail: step 4 below also
- *      raises it when handle->vpp_mv exceeds the drop path's ceiling.
+ *      no database entry, so it wins over the table with no table read. Step 4
+ *      below also raises the undropped rail when handle->vpp_mv exceeds the
+ *      drop path's ceiling.
  *   2. row == NULL -> EPROM_HV_ROUTE_MASK, failing closed toward the
  *      drop-resistor path -- a regulated ~13V rather than an unregulated rail.
  *   3. row->vpp_path, read ONLY via pgm_read_byte (a direct read compiles and
@@ -254,6 +250,14 @@ rurp_register_t eprom_hv_route_mask(firestarter_handle_t* handle) {
 /* The public write wrapper owns high-voltage shutdown, including early
  * exits from this internal body. */
 static void eprom_internal_write_execute_body(firestarter_handle_t* handle) {
+    const eprom_params_t* row = eprom_params_for(handle->protocol);
+    if (row == NULL) {
+        // configure_eprom already refuses an unknown protocol, so this is
+        // unreachable. It fails closed before any route is asserted.
+        LOG_ERROR_ID_U8(MSG_ERR_PROTOCOL_NOT_IMPLEMENTED, (uint8_t)handle->protocol);
+        handle->response_code = RESPONSE_CODE_ERROR;
+        return;
+    }
     // Select the program-voltage route once per block using the protocol.
     if (handle->firestarter_get_control_register(handle, CTRL_VPP_REGULATOR_ENABLE) == 0) {
         handle->firestarter_set_control_register(handle, eprom_hv_route_mask(handle), 1);
@@ -263,13 +267,8 @@ static void eprom_internal_write_execute_body(firestarter_handle_t* handle) {
     // Do NOT add a pins>=32 clear here. mem_util_calculate_top_address_register's
     // revision-gated preserve mask lets CTRL_VPP_VPE_DROP_ENABLE survive a 32-pin
     // block's set_address() on Rev 2-class hardware; an explicit clear would strip
-    // the very bit the guard above just asserted, on every revision.
+    // the very bit asserted above, on every revision.
 
-    const eprom_params_t* row = eprom_params_for(handle->protocol);
-    if (row == NULL) {
-        // Fail closed if a protocol has no parameter row; never dereference NULL.
-        return;
-    }
     uint32_t energy_cap_us      = pgm_read_dword(&row->energy_cap_us);
     uint8_t  max_pulses         = pgm_read_byte(&row->max_pulses);
 #if EPROM_OVERPROGRAM_SUPPORTED
@@ -311,10 +310,9 @@ static void eprom_internal_write_execute_body(firestarter_handle_t* handle) {
      *     distinguish "was flagged, now matches" (converged this pass) from
      *     "never flagged" (matched all along) -- the state overprogram needs.
      *
-     * MARGIN IS NOT TRADED FOR SPEED. The route is held up for the whole pulse
-     * pass, so every strobe after the first sees a better-settled rail than the
-     * per-pulse version gave. OE/VPP still comes fully down before every verify
-     * read, which is the Program-Verify requirement that forces the assert.
+     * The route is held up for the whole pulse pass, so every strobe after the
+     * first sees a settled rail. OE/VPP still comes fully down before every
+     * verify read, which the Program-Verify mode requires.
      *
      * `pending` is a stack bitmask of DATA_BUFFER_SIZE/8 bytes. No static RAM.
      */
@@ -394,8 +392,8 @@ static void eprom_internal_write_execute_body(firestarter_handle_t* handle) {
                     // the handle. Route-wrapped per byte, because an overprogram pulse
                     // is a program pulse and this site runs with the pass's route down.
                     //
-                    // COMPILED OUT ON LEONARDO to fund that target's flash -- see
-                    // include/eprom.h's EPROM_OVERPROGRAM_SUPPORTED.
+                    // Compiled out on leonardo to save flash. See
+                    // EPROM_OVERPROGRAM_SUPPORTED in include/eprom.h.
                     uint32_t op_us = eprom_overprogram_us(pulses, org_delay, overprogram_factor, overprogram_cap_us);
                     if (op_us) {
                         handle->pulse_delay = op_us;
@@ -450,9 +448,8 @@ static void eprom_internal_write_execute_body(firestarter_handle_t* handle) {
     }
 
     // verify_mode: 0x07/0x08 ship VERIFY_PER_PULSE_PLUS_FINAL -- one more
-    // full-block read-and-compare pass, mirroring memory_verify_execute
-    // (memory.cpp) exactly: same MSG_ERR_VERIFY id, same 5-byte payload,
-    // same early return. 0x0B ships VERIFY_PER_PULSE -- no final pass.
+    // full-block read-and-compare pass through memory_verify_execute. 0x0B
+    // ships VERIFY_PER_PULSE -- no final pass.
     if (verify_mode == VERIFY_PER_PULSE_PLUS_FINAL) {
         memory_verify_execute(handle);
     }
@@ -490,7 +487,7 @@ uint16_t eprom_get_chip_id(firestarter_handle_t* handle) {
     delay(100);
     uint16_t chip_id = handle->firestarter_get_data(handle, 0x0000) << 8;
     chip_id |= (handle->firestarter_get_data(handle, 0x0001));
-    handle->firestarter_set_control_register(handle, EPROM_HV_ALL_OFF_MASK, 0);  // shared composite (was REGULATOR | A9)
+    handle->firestarter_set_control_register(handle, EPROM_HV_ALL_OFF_MASK, 0);
     return chip_id;
 }
 
@@ -516,17 +513,14 @@ void eprom_check_vpp(firestarter_handle_t* handle) {
     // present the verdict as if it meant something.
     mem_util_warn_if_uncalibrated(handle);
 
-    // Route selection via eprom_hv_route_mask --
-    // see eprom_internal_write_execute_body's identical call, above, for
-    // the full rationale. Replaces the byte-identical
-    // protocol==0x0B||FLAG_VPE_AS_VPP fork this file used to carry twice.
+    // Route selection via eprom_hv_route_mask, as in the write body.
     handle->firestarter_set_control_register(handle, eprom_hv_route_mask(handle), 1);
 
     delay(100);
     uint16_t vpp_mv = rurp_read_voltage_mv();
     LOG_DEBUG_ID_SUB_U16(DBG_CHECKING_VPP_VOLTAGE, vpp_mv);
     mem_util_check_vpp_window(handle, vpp_mv);
-    handle->firestarter_set_control_register(handle, EPROM_HV_ALL_OFF_MASK, 0);  // shared composite (was REGULATOR | DROP)
+    handle->firestarter_set_control_register(handle, EPROM_HV_ALL_OFF_MASK, 0);
 }
 
 void eprom_internal_erase(firestarter_handle_t* handle) {
@@ -538,17 +532,16 @@ void eprom_internal_erase(firestarter_handle_t* handle) {
     handle->firestarter_set_control_register(handle, CTRL_VPP_A9_ENABLE | CTRL_VPE_ENABLE, 1);  // Erase with VPE - assumes CTRL_VPP_VPE_DROP_ENABLE isn't set and left active previously
     delay(100);
     rurp_chip_enable();
-    /* The ERASE pulse width, NOT the per-byte program width the host sends. Using
-     * pulse_duration_us here (100 us for W27C512) against a T_PWE of 95/100/105 ms
-     * only partially erases the part, and surfaces as four unrelated `dev test`
-     * failures. include/eprom.h's EPROM_ERASE_PULSE_US has the bounds. Routed
-     * through mem_util_delay_us because 100000 us is far over the AVR
+    /* The ERASE pulse width, not the per-byte program width the host sends: the
+     * program width is far below the erase pulse minimum and only partially
+     * erases the part. include/eprom.h's EPROM_ERASE_PULSE_US has the bounds.
+     * Routed through mem_util_delay_us because 100000 us is far over the AVR
      * delayMicroseconds ceiling. */
     mem_util_delay_us(EPROM_ERASE_PULSE_US);
     // After the erase pulse, we should disable the chip to end the programming cycle.
     rurp_chip_disable();
 
-    handle->firestarter_set_control_register(handle, EPROM_HV_ALL_OFF_MASK, 0);  // shared composite (was REGULATOR | A9 | VPE)
+    handle->firestarter_set_control_register(handle, EPROM_HV_ALL_OFF_MASK, 0);
 }
 
 void eprom_generic_init(firestarter_handle_t* handle) {
