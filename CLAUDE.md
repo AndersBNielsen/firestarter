@@ -180,13 +180,17 @@ Two limits apply:
 - **`leonardo` and native only.** On `SERIAL_ON_IO` targets (`uno`, `uno328pb`) the send and its
   `last_emit_ms` state compile out. This is a hardware limit:
   1. `rurp_set_programmer_mode()` stops the UART for the full programmer-mode window.
-  2. The Uno `rurp_log_id` override then holds frames in a 4-slot buffer.
-  3. When that buffer is full, the next frame is lost without an error.
-  4. A lost `MSG_ERR_MAX_PULSES` frame changes a program failure into a host transport timeout.
+  2. The Uno `rurp_log_id` override then holds frames in a 4-slot buffer (`include/deferred_log.h`).
+  3. When that buffer is full, an error, control or data frame replaces the newest INFO or WARN
+     frame. A new INFO or WARN frame, or any frame when no INFO or WARN frame is held, is lost
+     without an error.
+  4. A progress frame per byte would fill the buffer with frames that must not be lost, so a later
+     `MSG_ERR_MAX_PULSES` frame could still be lost and a program failure would become a host
+     transport timeout.
 
-  No behavior test currently covers this board-specific transport limit. Native tests do not
-  compile `src/boards/uno_rurp_shield.cpp`, and the capture stub lacks its `com_mode` gate.
-  Verify the behavior on the target board before changing this path.
+  The `test_messages` suite tests the buffer rule in `deferred_log.h`. Native tests do not compile
+  `src/boards/uno_rurp_shield.cpp`, and the capture stub lacks its `com_mode` gate. Verify the
+  behavior on the target board before changing this path.
 
 Per-row differences:
 
