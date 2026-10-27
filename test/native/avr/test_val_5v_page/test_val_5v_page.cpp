@@ -36,6 +36,21 @@ extern "C" {
 
 using namespace fakeit;
 
+/* DIP32_SST39SF040, the pin map of every 32-pin 0x05/0x06 row, as the host
+ * sends it: A0-A16 on bus lines 0-16, A17 on line 20, A18 on line 21, and WE
+ * (pin 31) on line 22, the CTRL_READ_WRITE bit. Command cycles take the full
+ * remap path, and a zeroed bus_config is not an identity map: it folds every
+ * address onto bus line 0. */
+static const bus_config_t DIP32_FLASH_BUS = {
+    { 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+      0x10, 0x14, 0x15, 0xFF },
+    0x0031FFFFUL,
+    17,
+    22,
+    0xFF,
+    0x00000000UL
+};
+
 /* Recording API — symbols compiled because host_stubs.cpp defines HOST_STUBS_RECORD_BUS. */
 extern "C" void clear_bus_recording();
 extern "C" int  bus_recording_count();
@@ -44,6 +59,7 @@ extern "C" rurp_register_t recorded_data(int i);
 extern "C" bool bus_recording_saturated();
 
 static std::vector<uint8_t> s_wire_bytes;
+static uint32_t s_millis = 0;
 
 static uint8_t s_stub_raw_value = 0;
 static uint8_t stub_get_data_return_fixed(firestarter_handle_t* handle, uint32_t address) {
@@ -62,6 +78,8 @@ void setUp(void) {
     When(OverloadedMethod(ArduinoFake(Serial), write, size_t(const uint8_t*, size_t))).AlwaysReturn(1);
     When(Method(ArduinoFake(Serial), flush)).AlwaysReturn();
     When(Method(ArduinoFake(), delayMicroseconds)).AlwaysReturn();
+    s_millis = 0;
+    When(Method(ArduinoFake(), millis)).AlwaysDo([]() -> unsigned long { return s_millis++; });
     When(Method(ArduinoFake(), delay)).AlwaysReturn();
     clear_bus_recording();
 }
@@ -70,6 +88,7 @@ void tearDown(void) {}
 
 static firestarter_handle_t make_handle(uint32_t protocol, uint8_t cmd) {
     firestarter_handle_t h = {};
+    h.bus_config = DIP32_FLASH_BUS;
     h.protocol   = protocol;
     h.cmd        = cmd;
     h.response_code = RESPONSE_CODE_OK;
@@ -183,6 +202,7 @@ void test_5v_page_0x39_write_configure_no_vpp(void) {
 
 static firestarter_handle_t make_write_handle_with_data(void) {
     firestarter_handle_t h = {};
+    h.bus_config = DIP32_FLASH_BUS;
     h.protocol   = 0x05;
     h.cmd        = CMD_WRITE;
     h.response_code = RESPONSE_CODE_OK;
@@ -208,6 +228,7 @@ static firestarter_handle_t make_write_handle_with_data(void) {
  * below never depended on how large mem_size is. */
 static firestarter_handle_t make_write_init_handle_blank_check_enabled(void) {
     firestarter_handle_t h = {};
+    h.bus_config = DIP32_FLASH_BUS;
     h.protocol   = 0x05;
     h.cmd        = CMD_WRITE;
     h.response_code = RESPONSE_CODE_OK;
@@ -223,6 +244,7 @@ static firestarter_handle_t make_write_init_handle_blank_check_enabled(void) {
 
 static firestarter_handle_t make_write_init_handle_can_erase_set(void) {
     firestarter_handle_t h = {};
+    h.bus_config = DIP32_FLASH_BUS;
     h.protocol   = 0x05;
     h.cmd        = CMD_WRITE;
     h.response_code = RESPONSE_CODE_OK;
@@ -236,7 +258,8 @@ static firestarter_handle_t make_write_init_handle_can_erase_set(void) {
 
 /* Helper: scan recording for FLASH_ENABLE_WRITE address signature.
  * FLASH_ENABLE_WRITE addresses: 0x5555, 0x2AAA, 0x5555.
- * fu_flash_fast_address writes (LSB=addr&0xFF, MSB=(addr>>8)&0xFF).
+ * Each command cycle latches LSB=addr&0xFF and MSB=(addr>>8)&0xFF (identity
+ * on DIP32_FLASH_BUS).
  * Signature MSB pattern at start: 0x55, 0x2A, 0x55 in consecutive MSB writes.
  * Returns true if found, false if not. */
 /* Counts every occurrence of the SDP MSB signature in the recording and
@@ -311,6 +334,7 @@ void test_5v_page_write_execute_no_vpp(void) {
  * over 128 bytes proves the firmware used the real 128-byte page. */
 void test_5v_page_write_execute_page_starts_at_real_page_not_derived(void) {
     firestarter_handle_t h = {};
+    h.bus_config = DIP32_FLASH_BUS;
     h.protocol       = 0x05;
     h.cmd            = CMD_WRITE;
     h.response_code  = RESPONSE_CODE_OK;
@@ -341,6 +365,7 @@ void test_5v_page_write_execute_page_starts_at_real_page_not_derived(void) {
  * write would still corrupt the device silently. */
 void test_5v_page_write_execute_refuses_with_no_page_size(void) {
     firestarter_handle_t h = {};
+    h.bus_config = DIP32_FLASH_BUS;
     h.protocol       = 0x05;
     h.cmd            = CMD_WRITE;
     h.response_code  = RESPONSE_CODE_OK;
@@ -362,6 +387,7 @@ void test_5v_page_write_execute_refuses_with_no_page_size(void) {
 
 void test_5v_page_write_execute_refuses_unaligned_start(void) {
     firestarter_handle_t h = {};
+    h.bus_config = DIP32_FLASH_BUS;
     h.protocol       = 0x05;
     h.cmd            = CMD_WRITE;
     h.response_code  = RESPONSE_CODE_OK;
@@ -383,6 +409,7 @@ void test_5v_page_write_execute_refuses_unaligned_start(void) {
 
 void test_5v_page_write_execute_accepts_page_exact_write(void) {
     firestarter_handle_t h = {};
+    h.bus_config = DIP32_FLASH_BUS;
     h.protocol       = 0x05;
     h.cmd            = CMD_WRITE;
     h.response_code  = RESPONSE_CODE_OK;
@@ -408,6 +435,7 @@ void test_5v_page_write_execute_accepts_page_exact_write(void) {
 
 void test_5v_page_write_execute_refuses_partial_length(void) {
     firestarter_handle_t h = {};
+    h.bus_config = DIP32_FLASH_BUS;
     h.protocol       = 0x05;
     h.cmd            = CMD_WRITE;
     h.response_code  = RESPONSE_CODE_OK;
@@ -429,6 +457,7 @@ void test_5v_page_write_execute_refuses_partial_length(void) {
 
 void test_5v_page_write_execute_refuses_unaligned_start_and_partial_length(void) {
     firestarter_handle_t h = {};
+    h.bus_config = DIP32_FLASH_BUS;
     h.protocol       = 0x05;
     h.cmd            = CMD_WRITE;
     h.response_code  = RESPONSE_CODE_OK;
@@ -450,6 +479,7 @@ void test_5v_page_write_execute_refuses_unaligned_start_and_partial_length(void)
 
 void test_5v_page_write_execute_refuses_single_byte_payload(void) {
     firestarter_handle_t h = {};
+    h.bus_config = DIP32_FLASH_BUS;
     h.protocol       = 0x05;
     h.cmd            = CMD_WRITE;
     h.response_code  = RESPONSE_CODE_OK;
@@ -471,6 +501,7 @@ void test_5v_page_write_execute_refuses_single_byte_payload(void) {
 
 void test_5v_page_write_execute_accepts_zero_length_chunk(void) {
     firestarter_handle_t h = {};
+    h.bus_config = DIP32_FLASH_BUS;
     h.protocol       = 0x05;
     h.cmd            = CMD_WRITE;
     h.response_code  = RESPONSE_CODE_OK;
@@ -492,6 +523,7 @@ void test_5v_page_write_execute_accepts_zero_length_chunk(void) {
 
 static firestarter_handle_t drive_page_boundary_case(uint32_t mem_size, uint16_t page_size, uint32_t data_size) {
     firestarter_handle_t h = {};
+    h.bus_config = DIP32_FLASH_BUS;
     h.protocol       = 0x05;
     h.cmd            = CMD_WRITE;
     h.response_code  = RESPONSE_CODE_OK;
@@ -593,6 +625,7 @@ void test_5v_page_write_execute_boundary_524288_256(void) {
 
 void test_5v_page_write_execute_boundary_524288_512(void) {
     firestarter_handle_t h = {};
+    h.bus_config = DIP32_FLASH_BUS;
     h.protocol       = 0x05;
     h.cmd            = CMD_WRITE;
     h.response_code  = RESPONSE_CODE_OK;
@@ -624,6 +657,7 @@ void test_5v_page_write_execute_boundary_524288_512(void) {
 
 void test_5v_page_write_execute_refuses_unaligned_second_chunk(void) {
     firestarter_handle_t h = {};
+    h.bus_config = DIP32_FLASH_BUS;
     h.protocol       = 0x05;
     h.cmd            = CMD_WRITE;
     h.response_code  = RESPONSE_CODE_OK;
@@ -656,6 +690,7 @@ void test_5v_page_write_execute_refuses_unaligned_second_chunk(void) {
 
 void test_5v_page_write_execute_accepts_aligned_two_chunk_p256(void) {
     firestarter_handle_t h = {};
+    h.bus_config = DIP32_FLASH_BUS;
     h.protocol       = 0x05;
     h.cmd            = CMD_WRITE;
     h.response_code  = RESPONSE_CODE_OK;
@@ -689,6 +724,7 @@ void test_5v_page_write_execute_accepts_aligned_two_chunk_p256(void) {
 
 void test_5v_page_write_execute_accepts_aligned_two_chunk_p512(void) {
     firestarter_handle_t h = {};
+    h.bus_config = DIP32_FLASH_BUS;
     h.protocol       = 0x05;
     h.cmd            = CMD_WRITE;
     h.response_code  = RESPONSE_CODE_OK;
@@ -736,6 +772,7 @@ void test_5v_page_write_execute_ignores_mem_size_entirely(void) {
 
 static void run_page_size_refusal_case(uint16_t page_size) {
     firestarter_handle_t h = {};
+    h.bus_config = DIP32_FLASH_BUS;
     h.protocol       = 0x05;
     h.cmd            = CMD_WRITE;
     h.response_code  = RESPONSE_CODE_OK;
@@ -769,6 +806,7 @@ void test_5v_page_write_execute_refuses_page_size_transport_saturated(void) {
 
 void test_5v_page_write_execute_positive_control_valid_page_size(void) {
     firestarter_handle_t h = {};
+    h.bus_config = DIP32_FLASH_BUS;
     h.protocol       = 0x05;
     h.cmd            = CMD_WRITE;
     h.response_code  = RESPONSE_CODE_OK;
@@ -973,9 +1011,119 @@ void test_5v_page_lock_status_mode_bracketing(void) {
     TEST_ASSERT_EQUAL_HEX8(0x55, msb[6]);
 }
 
+/* The page wait polls DQ7 of the last byte loaded, not the whole byte. */
+static uint8_t s_part_answer = 0;
+static int s_part_reads = 0;
+static uint8_t stub_part(firestarter_handle_t* handle, uint32_t address) {
+    (void)handle; (void)address;
+    s_part_reads++;
+    return s_part_answer;
+}
+
+static firestarter_handle_t make_one_page_write(uint8_t last_byte) {
+    firestarter_handle_t h = {};
+    h.bus_config = DIP32_FLASH_BUS;
+    h.protocol       = 0x05;
+    h.cmd            = CMD_WRITE;
+    h.response_code  = RESPONSE_CODE_OK;
+    h.mem_size       = 65536;
+    h.page_size      = 64;
+    h.address        = 0x1000;
+    h.data_size      = 64;
+    h.data_buffer[63] = (char)last_byte;
+    configure_memory(&h);
+    h.firestarter_get_data = stub_part;
+    s_part_reads = 0;
+    return h;
+}
+
+void test_5v_page_wait_ends_on_dq7_not_the_whole_byte(void) {
+    firestarter_handle_t h = make_one_page_write(0x7F);
+    s_part_answer = 0x00; /* DQ7 agrees with 0x7F, the other bits do not */
+
+    h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_OK, h.response_code,
+        "DQ7 alone says the page write ended; the host verify checks the data");
+    TEST_ASSERT_EQUAL_MESSAGE(2, s_part_reads, "two consecutive DQ7 matches end the wait");
+}
+
+void test_5v_page_wait_times_out_with_the_last_byte_in_the_report(void) {
+    firestarter_handle_t h = make_one_page_write(0x7F);
+    s_part_answer = 0x80; /* DQ7 stays complemented: still writing */
+
+    h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);
+    TEST_ASSERT_TRUE(s_wire_bytes.size() > 11);
+    TEST_ASSERT_EQUAL_HEX8(MSG_ERR_FL4_VERIFY_TIMEOUT, s_wire_bytes[6]);
+    /* [expected][u24 address][observed] */
+    TEST_ASSERT_EQUAL_HEX8(0x7F, s_wire_bytes[7]);
+    TEST_ASSERT_EQUAL_HEX8(0x00, s_wire_bytes[8]);
+    TEST_ASSERT_EQUAL_HEX8(0x10, s_wire_bytes[9]);
+    TEST_ASSERT_EQUAL_HEX8(0x3F, s_wire_bytes[10]);
+    TEST_ASSERT_EQUAL_HEX8(0x80, s_wire_bytes[11]);
+}
+
+/* Issue #62: a software chip erase for the 0x05 family. */
+void test_5v_page_erase_dispatch(void) {
+    firestarter_handle_t h = make_handle(0x05, CMD_ERASE);
+    configure_memory(&h);
+    TEST_ASSERT_NOT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);
+    TEST_ASSERT_NOT_NULL_MESSAGE((const void*)h.firestarter_operation_main,
+        "0x05 must accept CMD_ERASE");
+    TEST_ASSERT_NOT_NULL_MESSAGE((const void*)h.firestarter_operation_init,
+        "the erase checks the chip ID first when the host sends one");
+}
+
+void test_5v_page_erase_sends_the_six_cycle_sequence_and_waits(void) {
+    firestarter_handle_t h = make_handle(0x05, CMD_ERASE);
+    configure_memory(&h);
+    h.firestarter_get_data = stub_part;
+    s_part_answer = 0xFF;
+    s_part_reads = 0;
+    clear_bus_recording();
+
+    h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_OK, h.response_code);
+    const uint8_t want[6][2] = {
+        {0x55, 0x55}, {0xAA, 0x2A}, {0x55, 0x55}, {0x55, 0x55}, {0xAA, 0x2A}, {0x55, 0x55},
+    };
+    int cycle = 0;
+    for (int i = 0; i + 1 < bus_recording_count() && cycle < 6; i++) {
+        if (recorded_reg(i) == LEAST_SIGNIFICANT_BYTE && recorded_reg(i + 1) == MOST_SIGNIFICANT_BYTE) {
+            TEST_ASSERT_EQUAL_HEX8(want[cycle][0], recorded_data(i));
+            TEST_ASSERT_EQUAL_HEX8(want[cycle][1], recorded_data(i + 1));
+            cycle++;
+        }
+    }
+    TEST_ASSERT_EQUAL_MESSAGE(6, cycle, "six command cycles at 5555/2AAA");
+    TEST_ASSERT_EQUAL_MESSAGE(3, s_part_reads, "two DQ7 reads, then the erased-byte check");
+    assert_no_vpp_in_recording("the 0x05 chip erase is a 5 V operation");
+}
+
+void test_5v_page_erase_that_leaves_address_zero_is_not_blank(void) {
+    firestarter_handle_t h = make_handle(0x05, CMD_ERASE);
+    configure_memory(&h);
+    h.firestarter_get_data = stub_part;
+    s_part_answer = 0xC3; /* DQ7 high, so the wait ends: a locked boot block */
+
+    h.firestarter_operation_main(&h);
+
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);
+    TEST_ASSERT_EQUAL_HEX8(MSG_ERR_NOT_BLANK, s_wire_bytes[6]);
+}
+
 int main(int argc, char** argv) {
     (void)argc; (void)argv;
     UNITY_BEGIN();
+
+    RUN_TEST(test_5v_page_wait_ends_on_dq7_not_the_whole_byte);
+    RUN_TEST(test_5v_page_wait_times_out_with_the_last_byte_in_the_report);
+    RUN_TEST(test_5v_page_erase_dispatch);
+    RUN_TEST(test_5v_page_erase_sends_the_six_cycle_sequence_and_waits);
+    RUN_TEST(test_5v_page_erase_that_leaves_address_zero_is_not_blank);
 
     /* Protocol 0x05 configure-phase VPP-safety proof */
     RUN_TEST(test_5v_page_0x05_read_configure_no_vpp);

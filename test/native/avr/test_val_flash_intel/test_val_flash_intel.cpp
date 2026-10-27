@@ -27,10 +27,13 @@
 #include <ArduinoFake.h>
 #include <unity.h>
 
+#include <vector>
+
 extern "C" {
 #include "memory.h"
 }
 #include "firestarter.h"
+#include "messages.h"
 #include "rurp_pinout.h"
 
 using namespace fakeit;
@@ -41,9 +44,19 @@ extern "C" int  bus_recording_count();
 extern "C" uint8_t recorded_reg(int i);
 extern "C" rurp_register_t recorded_data(int i);
 
+static std::vector<uint8_t> s_wire_bytes;
+static uint32_t s_millis = 0;
+
 void setUp(void) {
     ArduinoFakeReset();
-    When(OverloadedMethod(ArduinoFake(Serial), write, size_t(uint8_t))).AlwaysReturn(1);
+    s_wire_bytes.clear();
+    When(OverloadedMethod(ArduinoFake(Serial), write, size_t(uint8_t)))
+        .AlwaysDo([](uint8_t b) -> size_t {
+            s_wire_bytes.push_back(b);
+            return (size_t)1;
+        });
+    s_millis = 0;
+    When(Method(ArduinoFake(), millis)).AlwaysDo([]() -> unsigned long { return s_millis++; });
     When(OverloadedMethod(ArduinoFake(Serial), write, size_t(const uint8_t*, size_t))).AlwaysReturn(1);
     When(Method(ArduinoFake(Serial), flush)).AlwaysReturn();
     /* delay() is called by flash_intel_write_init (delay(500) for regulator settle). */
@@ -134,6 +147,81 @@ void test_flash_intel_read_configure_only_does_not_enable_vpp(void) {
     }
 }
 
+/* ─── Issue #116: the status-register decode ─────────────────────────────── */
+
+static uint8_t s_status = 0x80;
+static std::vector<uint8_t> s_commands;
+static uint8_t stub_status(firestarter_handle_t*, uint32_t) { return s_status; }
+static void stub_command(firestarter_handle_t*, uint32_t, uint8_t data) { s_commands.push_back(data); }
+
+/* Runs one operation main against a part that answers every read with sr. */
+static firestarter_handle_t run_with_status(uint8_t cmd, uint8_t sr) {
+    firestarter_handle_t h = make_handle(cmd);
+    h.data_size = 1;
+    configure_memory(&h);
+    h.firestarter_get_data = stub_status;
+    h.firestarter_set_data = stub_command;
+    s_status = sr;
+    s_commands.clear();
+    h.firestarter_operation_main(&h);
+    return h;
+}
+
+static uint8_t first_frame_id(void) {
+    return s_wire_bytes.size() > 6 ? s_wire_bytes[6] : 0;
+}
+
+void test_intel_sr_ready_without_error_succeeds(void) {
+    firestarter_handle_t h = run_with_status(CMD_ERASE, 0x80);
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_OK, h.response_code);
+    TEST_ASSERT_EQUAL_size_t(0, s_wire_bytes.size());
+}
+
+void test_intel_sr3_is_vpp_low(void) {
+    firestarter_handle_t h = run_with_status(CMD_WRITE, 0x88);
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);
+    TEST_ASSERT_EQUAL_HEX8(MSG_ERR_INTEL_VPP, first_frame_id());
+}
+
+void test_intel_sr4_is_a_program_error(void) {
+    firestarter_handle_t h = run_with_status(CMD_WRITE, 0x90);
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);
+    TEST_ASSERT_EQUAL_HEX8(MSG_ERR_INTEL_PROGRAM, first_frame_id());
+}
+
+void test_intel_sr5_fails_the_erase(void) {
+    firestarter_handle_t h = run_with_status(CMD_ERASE, 0xA0);
+    TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
+        "SR.5 is the erase error: the erase must not report success");
+    TEST_ASSERT_EQUAL_HEX8(MSG_ERR_INTEL_PROGRAM, first_frame_id());
+}
+
+void test_intel_sr4_and_sr5_is_a_command_sequence_error(void) {
+    firestarter_handle_t h = run_with_status(CMD_ERASE, 0xB0);
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);
+    TEST_ASSERT_EQUAL_HEX8(MSG_ERR_CMD, first_frame_id());
+}
+
+void test_intel_vpp_low_wins_over_the_other_bits(void) {
+    firestarter_handle_t h = run_with_status(CMD_ERASE, 0xB8);
+    TEST_ASSERT_EQUAL_HEX8(MSG_ERR_INTEL_VPP, first_frame_id());
+}
+
+void test_intel_error_clears_the_status_then_reads_array(void) {
+    run_with_status(CMD_ERASE, 0xA0);
+    TEST_ASSERT_TRUE(s_commands.size() >= 4);
+    TEST_ASSERT_EQUAL_HEX8(0x20, s_commands[0]);
+    TEST_ASSERT_EQUAL_HEX8(0xD0, s_commands[1]);
+    TEST_ASSERT_EQUAL_HEX8(0x50, s_commands[2]);
+    TEST_ASSERT_EQUAL_HEX8(0xFF, s_commands[3]);
+}
+
+void test_intel_busy_part_times_out(void) {
+    firestarter_handle_t h = run_with_status(CMD_WRITE, 0x00);
+    TEST_ASSERT_EQUAL(RESPONSE_CODE_ERROR, h.response_code);
+    TEST_ASSERT_EQUAL_HEX8(MSG_ERR_INTEL_SR_TIMEOUT, first_frame_id());
+}
+
 int main(int argc, char** argv) {
     (void)argc; (void)argv;
     UNITY_BEGIN();
@@ -144,6 +232,15 @@ int main(int argc, char** argv) {
 
     /* NEGATIVE CONTROL: configure-only (CMD_READ, no init) — no VPP bits set */
     RUN_TEST(test_flash_intel_read_configure_only_does_not_enable_vpp);
+
+    RUN_TEST(test_intel_sr_ready_without_error_succeeds);
+    RUN_TEST(test_intel_sr3_is_vpp_low);
+    RUN_TEST(test_intel_sr4_is_a_program_error);
+    RUN_TEST(test_intel_sr5_fails_the_erase);
+    RUN_TEST(test_intel_sr4_and_sr5_is_a_command_sequence_error);
+    RUN_TEST(test_intel_vpp_low_wins_over_the_other_bits);
+    RUN_TEST(test_intel_error_clears_the_status_then_reads_array);
+    RUN_TEST(test_intel_busy_part_times_out);
 
     return UNITY_END();
 }

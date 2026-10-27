@@ -14,10 +14,7 @@
 #include "timeout_utils.h"
 #include <stdio.h>
 
-
 void fu_flash_flip_data(firestarter_handle_t* handle, uint32_t address, uint8_t data);
-void fu_flash_fast_address(firestarter_handle_t* handle, uint32_t address);
-uint8_t fu_flash_data_poll();
 
 void flash_util_byte_flipping(firestarter_handle_t* handle, const byte_flip_t* byte_flips, size_t size) {
 
@@ -28,53 +25,78 @@ void flash_util_byte_flipping(firestarter_handle_t* handle, const byte_flip_t* b
     handle->firestarter_set_control_register(handle, CTRL_READ_WRITE, 0);
 }
 
-void flash_util_verify_operation(firestarter_handle_t* handle, uint8_t expected_data) {
-
-    handle->firestarter_set_control_register(handle, CTRL_READ_WRITE, 1);
-
+bool flash_util_wait_ready(firestarter_handle_t* handle, uint32_t address, uint8_t expected, uint16_t timeout_ms) {
     const uint32_t started_ms = (uint32_t)millis();
-    while (!fs_timeout_expired(started_ms, 150U, (uint32_t)millis())) {
-        // Data Polling: Read from the address and check DQ7.
-        // When the write is complete, the data read back will have the same DQ7 as the data written.
-        if ((fu_flash_data_poll() & 0x80) == (expected_data & 0x80)) {
-            // Some datasheets recommend reading a second time to confirm the write has completed.
-            if ((fu_flash_data_poll() & 0x80) == (expected_data & 0x80)) {
-                rurp_set_data_output();
-                rurp_chip_disable();
-                rurp_chip_input();
-                return;  // Operation completed successfully
+    uint8_t matches = 0;
+    do {
+        if (((handle->firestarter_get_data(handle, address) ^ expected) & FLASH_DQ7) == 0) {
+            if (++matches == 2) {
+                return true;
             }
+        } else {
+            matches = 0;
         }
-    }
-    LOG_ERROR_ID(MSG_ERR_OP_TIMEOUT);
-    handle->response_code = RESPONSE_CODE_ERROR;
-    return;
+    } while (!fs_timeout_expired(started_ms, timeout_ms, (uint32_t)millis()));
+    return false;
 }
 
+// A failed program or erase can leave an AMD-style part outside read mode
+// until it sees a reset. AA/55/F0 is that reset, and it is also the SST
+// Software ID exit, so one sequence covers both families.
+static void flash_util_fail(firestarter_handle_t* handle) {
+    handle->response_code = RESPONSE_CODE_ERROR;
+    flash_execute_command(FLASH_DISABLE_ID);
+}
+
+bool flash_util_wait_program(firestarter_handle_t* handle, uint32_t address, uint8_t expected) {
+    if (flash_util_wait_ready(handle, address, expected, FLASH_PROGRAM_TIMEOUT_MS)) {
+        return true;
+    }
+    LOG_ERROR_ID(MSG_ERR_OP_TIMEOUT);
+    flash_util_fail(handle);
+    return false;
+}
+
+bool flash_util_wait_erase(firestarter_handle_t* handle, uint32_t address) {
+    if (!flash_util_wait_ready(handle, address, 0xFF, FLASH_ERASE_TIMEOUT_MS)) {
+        LOG_ERROR_ID(MSG_ERR_OP_TIMEOUT);
+        flash_util_fail(handle);
+        return false;
+    }
+    // DQ7 only says the algorithm ended. The polled byte must also read
+    // erased, or the erase did not reach it (a protected sector, a locked
+    // boot block, or a command the part did not accept).
+    uint8_t value = handle->firestarter_get_data(handle, address);
+    if (value == 0xFF) {
+        return true;
+    }
+    uint8_t _b[4];
+    _b[0] = (uint8_t)((address >> 16) & 0xFF);
+    _b[1] = (uint8_t)((address >> 8) & 0xFF);
+    _b[2] = (uint8_t)(address & 0xFF);
+    _b[3] = value;
+    LOG_ERROR_ID_BYTES(MSG_ERR_NOT_BLANK, _b, 4);
+    flash_util_fail(handle);
+    return false;
+}
+
+void flash_util_chip_erase(firestarter_handle_t* handle) {
+    LOG_DEBUG_ID_SUB(DBG_CHIP_ERASE);
+    flash_execute_command(FLASH_ERASE);
+    delay(FLASH_CHIP_ERASE_MIN_MS);
+    flash_util_wait_erase(handle, 0);
+}
+
+// Command cycles take the same address path as a data write: the upper
+// address lines and the chip's bus remapping both apply. Only the strobe is
+// different -- a bare CE pulse, with no settle delay and no pulse width.
 void fu_flash_flip_data(firestarter_handle_t* handle, uint32_t address, uint8_t data) {
     rurp_set_data_output();
-    fu_flash_fast_address(handle, address);
+    handle->firestarter_set_address(handle, mem_util_remap_address_bus(handle, address, WRITE_FLAG));
     rurp_write_data_buffer(data);
     rurp_chip_input();
     rurp_chip_enable();
     rurp_chip_disable();
-}
-
-void fu_flash_fast_address(firestarter_handle_t* handle, uint32_t address) {
-    uint8_t lsb = address & 0xFF;
-    rurp_write_to_register(LEAST_SIGNIFICANT_BYTE, lsb);
-    uint8_t msb = ((address >> 8) & 0xFF);
-    rurp_write_to_register(MOST_SIGNIFICANT_BYTE, msb);
-}
-
-uint8_t fu_flash_data_poll() {
-    rurp_set_data_input();
-    rurp_chip_enable();
-    rurp_chip_output();
-    uint8_t data = rurp_read_data_buffer();
-    rurp_chip_disable();
-    rurp_chip_input();
-    return data;
 }
 
 /* Shared AMD/JEDEC chip-ID read: FLASH_ENABLE_ID → read 0x0000/0x0001
@@ -100,4 +122,10 @@ uint8_t flash_util_read_in_id_mode(firestarter_handle_t* handle, uint32_t addres
 void flash_util_check_chip_id_execute(firestarter_handle_t* handle) {
     uint16_t chip_id = flash_util_get_chip_id(handle);
     mem_util_report_chip_id(handle, chip_id, is_flag_set(FLAG_FORCE));
+}
+
+void flash_util_check_chip_id_init(firestarter_handle_t* handle) {
+    if (handle->chip_id > 0) {
+        flash_util_check_chip_id_execute(handle);
+    }
 }

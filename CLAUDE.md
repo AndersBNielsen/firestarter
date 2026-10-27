@@ -139,11 +139,11 @@ are in `src/proms/`.
 | `0x0B` | `PROTO_EPROM_24PIN` | `eprom.cpp` | Direct VPE route | 24-pin UV-EPROM. Refer to the 27C section. |
 | `0x0D` | `PROTO_EEPROM_PARALLEL` | `eeprom_28c.cpp` | None (5V) | SDP disable, then DQ7 page poll. Refer to the 0x0D section. |
 | `0x0E`, `0x27`, `0x28`, `0x29` | `PROTO_SRAM_32PIN`, `_24PIN`, `_28PIN`, `_32PIN_NVRAM` | `sram.cpp` | None (5V) | Generic read and write. |
-| `0x06` | `PROTO_FLASH_NOR_UNLOCK` | `flash_nor_unlock.cpp` | None (5V) | AMD unlock, sector erase. |
-| `0x05` | `PROTO_FLASH_5V_PAGE` | `flash_5v_page.cpp` | None (5V) | Page write, then DQ7 poll. |
+| `0x06` | `PROTO_FLASH_NOR_UNLOCK` | `flash_nor_unlock.cpp` | None (5V) | AMD unlock. Chip erase, or sector erase at a non-zero address. Each program and erase waits on DQ7. A write at a non-zero address does not erase. |
+| `0x05` | `PROTO_FLASH_5V_PAGE` | `flash_5v_page.cpp` | None (5V) | Page write, then DQ7 poll. Software chip erase. |
 | `0x35` | `PROTO_PHANTOM_0x35` | `flash_5v_page.cpp` | None (5V) | Phantom. No database chips. The upstream label names an ITE EC MCU. |
 | `0x39` | `PROTO_PHANTOM_0x39` | `flash_5v_page.cpp` | None (5V) | Phantom. No database chips. No upstream algorithm constant exists. |
-| `0x10` | `PROTO_FLASH_INTEL` | `flash_intel.cpp` | Regulator on pin 1 (`CTRL_VPP_P1_ENABLE`) | Command register, status-register poll. |
+| `0x10` | `PROTO_FLASH_INTEL` | `flash_intel.cpp` | Regulator on pin 1 (`CTRL_VPP_P1_ENABLE`), routed only after the rail measures in the window | Command register, status-register poll. |
 | `0x34` | `PROTO_EEPROM_8051BUS` | none | None (5V) | PCB-blocked. The terminal fail-closed call catches it. |
 
 ### The three 27C rows (`0x07`, `0x08`, `0x0B`)
