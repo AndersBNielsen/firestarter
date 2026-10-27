@@ -30,6 +30,7 @@ bool eprom_erase(firestarter_handle_t* handle) {
     LOG_DEBUG_ID_SUB(DBG_ERASE_PROM);
     if (!is_flag_set(FLAG_CAN_ERASE)) {
         LOG_ERROR_ID(MSG_ERR_NOT_SUPPORTED);
+        handle->response_code = RESPONSE_CODE_ERROR;
         return true;
     }
     return op_execute_simple_operation(handle);
@@ -93,6 +94,15 @@ static inline bool _process_incoming_data(firestarter_handle_t* handle) {
 
     switch (msg_type) {
         case OP_MSG_DONE:
+            // Without a region-end the host may end the write at any cursor.
+            // With one, the write is complete only at op_end, and the check
+            // above finishes it there before any message is read. A DONE
+            // before op_end means the host sent less data than it declared.
+            if (handle->region_end != 0) {
+                LOG_ERROR_ID(MSG_ERR_CMD);
+                handle->response_code = RESPONSE_CODE_ERROR;
+                return false;
+            }
             set_operation_to_done(handle);
             return true;
         case OP_MSG_DATA:
@@ -104,6 +114,14 @@ static inline bool _process_incoming_data(firestarter_handle_t* handle) {
             }
             break;
         default:
+            // op_get_message already logged a data error (OP_MSG_ERROR). Any
+            // other message here, for example a stray ACK, is a host
+            // protocol error: refuse it with an error frame, so the host
+            // does not wait for a timeout.
+            if (msg_type != OP_MSG_ERROR) {
+                LOG_ERROR_ID(MSG_ERR_CMD);
+            }
+            handle->response_code = RESPONSE_CODE_ERROR;
             return false;
     }
 
@@ -117,17 +135,25 @@ static inline bool _process_incoming_data(firestarter_handle_t* handle) {
 
 // Returns true on success/continue, false on error.
 static inline bool _process_outgoing_data(firestarter_handle_t* handle) {
-    if (handle->address > handle->mem_size) {
+    // A read ends at region-end when the command has one, else at mem_size.
+    const uint32_t op_end = mem_util_operation_end(handle);
+    if (handle->address > op_end) {
         LOG_ERROR_ID(MSG_ERR_OUT_OF_RANGE);
         handle->response_code = RESPONSE_CODE_ERROR;
         return false;
     }
-    if (handle->address == handle->mem_size) {
+    if (handle->address == op_end) {
         set_operation_to_done(handle);
         return true;
     }
     if (!op_execute_function(handle->firestarter_operation_main, handle)) {
         return false;  // Error, so finished.
+    }
+
+    // The read handler fills up to a whole buffer within mem_size. Cut the
+    // chunk at the end of the operation's region.
+    if (handle->data_size > op_end - handle->address) {
+        handle->data_size = op_end - handle->address;
     }
 
     // Wrap the raw chip-byte chunk in a MSG_DATA_CHUNK ID frame.
@@ -142,13 +168,8 @@ static inline bool _process_outgoing_data(firestarter_handle_t* handle) {
         return false;
     }
 
-    if (handle->data_size > handle->mem_size - handle->address) {
-        LOG_ERROR_ID(MSG_ERR_OUT_OF_RANGE);
-        handle->response_code = RESPONSE_CODE_ERROR;
-        return false;
-    }
     handle->address += handle->data_size;
-    if (handle->address >= handle->mem_size) {
+    if (handle->address >= op_end) {
         set_operation_to_done(handle);
     }
     return true;

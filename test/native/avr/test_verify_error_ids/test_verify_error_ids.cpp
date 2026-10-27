@@ -14,7 +14,7 @@
  * Every id is asserted in BOTH directions -- the id the site actually
  * raises asserted present, and the id it must never raise asserted absent
  * -- so a transposition fails instead of passing on a superset. The DQ7
- * data-poll wait (flash_util_verify_operation) has no compare-and-report
+ * data-poll wait (flash_util_wait_program) has no compare-and-report
  * path at all: it is pinned to the timeout id and explicitly asserted to
  * NEVER raise the verify id, because the requirement this suite replaces
  * previously claimed the opposite.
@@ -108,7 +108,7 @@ void setUp(void) {
 
     /* The advancing clock -- copied from test_cobs_cmd_frame.cpp's setUp.
      * Every other native suite pins millis() to a constant, which is why
-     * flash_util_verify_operation's 150 ms timeout arm has never been
+     * flash_util_wait_program's 150 ms timeout arm has never been
      * exercised anywhere in this tree until this suite. */
     millis_counter = 0;
     When(Method(ArduinoFake(Function), millis))
@@ -152,7 +152,7 @@ static firestarter_handle_t make_memory_verify_handle(void) {
 
 static firestarter_handle_t make_flash_util_handle(void) {
     firestarter_handle_t h = {};
-    h.protocol = 0x06; /* PROTO_FLASH_NOR_UNLOCK -- production's own caller of flash_util_verify_operation */
+    h.protocol = 0x06; /* PROTO_FLASH_NOR_UNLOCK -- production's own caller of flash_util_wait_program */
     h.cmd = CMD_WRITE;
     h.response_code = RESPONSE_CODE_OK;
     h.mem_size = 65536;
@@ -233,7 +233,7 @@ void test_shared_final_pass_verify_match_raises_neither_id(void) {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
- * Id group 2: the DQ7 data-poll wait (flash_util_verify_operation)
+ * Id group 2: the DQ7 data-poll wait (flash_util_wait_program)
  * ───────────────────────────────────────────────────────────────────────── */
 
 void test_flash_util_data_poll_timeout_raises_timeout_id_not_verify_id(void) {
@@ -241,7 +241,7 @@ void test_flash_util_data_poll_timeout_raises_timeout_id_not_verify_id(void) {
     configure_memory(&h);
     verify_ids_set_readback(0x00); /* DQ7 bit (0x80) never matches expected's 0x80 */
 
-    flash_util_verify_operation(&h, 0x80);
+    flash_util_wait_program(&h, 0, 0x80);
 
     std::vector<uint8_t> ids;
     verify_ids_captured_frame_ids(&ids);
@@ -250,7 +250,7 @@ void test_flash_util_data_poll_timeout_raises_timeout_id_not_verify_id(void) {
     TEST_ASSERT_TRUE_MESSAGE(verify_ids_contains(ids, (uint8_t)MSG_ERR_OP_TIMEOUT),
         "a DQ7 bit that never matches must raise MSG_ERR_OP_TIMEOUT");
     TEST_ASSERT_FALSE_MESSAGE(verify_ids_contains(ids, (uint8_t)MSG_ERR_VERIFY),
-        "flash_util_verify_operation is a DQ7 data-poll wait with no compare-and-report "
+        "flash_util_wait_program is a DQ7 data-poll wait with no compare-and-report "
         "path -- it can NEVER raise MSG_ERR_VERIFY. Pinning it to the verify id would be "
         "a false pin, which is exactly what this leg exists to rule out.");
     TEST_ASSERT_EQUAL_MESSAGE(RESPONSE_CODE_ERROR, h.response_code,
@@ -263,7 +263,7 @@ void test_flash_util_data_poll_match_raises_no_error_frame(void) {
     verify_ids_set_readback(0x80); /* DQ7 bit matches expected's 0x80 on both confirmation reads */
     h.response_code = RESPONSE_CODE_OK;
 
-    flash_util_verify_operation(&h, 0x80);
+    flash_util_wait_program(&h, 0, 0x80);
 
     std::vector<uint8_t> ids;
     verify_ids_captured_frame_ids(&ids);
@@ -321,7 +321,7 @@ void test_eeprom28c_page_readback_match_raises_no_verify_id(void) {
 
     std::vector<uint8_t> ids;
     verify_ids_captured_frame_ids(&ids);
-    /* Unlike memory_verify_execute and flash_util_verify_operation (which
+    /* Unlike memory_verify_execute and flash_util_wait_program (which
      * emit nothing at all on success), eeprom28c_write_execute
      * unconditionally emits MSG_INFO_PAGE_LOAD_WORST_US even on a fully
      * successful write -- so a truly empty capture here would mean the
